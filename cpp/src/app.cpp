@@ -13,6 +13,7 @@
 #include <cmath>
 #include <commdlg.h>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <map>
@@ -47,6 +48,19 @@ const std::pair<const char*, const char*> kAccents[] = {
 
 const ImVec4 kText(0.91f, 0.92f, 0.94f, 1), kSub(0.54f, 0.56f, 0.63f, 1), kDim(0.42f, 0.44f, 0.50f, 1);
 const ImVec4 kGreen = Hex("#3DDC84"), kAmber = Hex("#F5B942"), kIdle = Hex("#3A3F4B"), kGray = Hex("#6B7180");
+const ImVec4 kCrimson = Hex("#E5484D");
+
+// Which build this is (see version.h) - the word, its color and who it's for. "" = stable: no badge.
+struct ChannelInfo { const char* word; ImVec4 color; const char* who; };
+ChannelInfo Channel() {
+    if (!strcmp(OPTM_CHANNEL, "unstable"))
+        return { "UNSTABLE", kCrimson,
+                 "Still being changed - something in it may be untested or broken. Only for testing with Claude, never shared, and not for a game session you care about." };
+    if (OPTM_CHANNEL[0])   // "experimental", or any other word someone puts in version.h
+        return { "EXPERIMENTAL", kAmber,
+                 "A build ahead of the next release. Its features have each been tried, but not everything is proven on real hardware yet - fine for you, not for sharing widely." };
+    return { "", kGreen, "The public release. Safe to give to anyone." };
+}
 
 ImVec4 g_accent, g_card, g_card2, g_btn, g_chip, g_line;
 float g_cardR = 10, g_btnR = 6;
@@ -1490,12 +1504,13 @@ void App::Sidebar(float height) {
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopFont();
     ImGui::TextColored(kDim, "v" OPTM_VERSION);
-    if (OPTM_CHANNEL[0]) {   // a test build: say so, right under the name
+    ChannelInfo ch = Channel();
+    if (ch.word[0]) {   // not stable: say which build this is, right under the name
         ImGui::SameLine(0, 6 * s_);
         ImGui::SetWindowFontScale(0.8f);
-        ImGui::TextColored(kAmber, "EXPERIMENTAL");
+        ImGui::TextColored(ch.color, "%s", ch.word);
         ImGui::SetWindowFontScale(1.0f);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A test build of Project OptM " OPTM_VERSION " - not a public release");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ch.who);
     }
     ImGui::EndGroup();
     ImGui::Dummy(ImVec2(0, 14 * s_));
@@ -3018,6 +3033,10 @@ void App::PageAbout() {
     const char* ver = "v" OPTM_VERSION_LABEL "   -   Windows 10/11 x64";
     centerAt(ImGui::CalcTextSize(ver).x);
     ImGui::TextColored(kDim, "%s", ver);
+    ChannelInfo ch = Channel();
+    if (ch.word[0]) {
+        centered(std::string(ch.word) + ": " + ch.who, std::min(cw, 640 * s_), ch.color);
+    }
     ImGui::Dummy(ImVec2(0, 8 * s_));
     centered("Spots the game you're playing and tunes Windows for it: the best CPU cores, priorities, background apps, "
              "power and memory. When the game closes, every change is put back. Nothing is left behind.", std::min(cw, 720 * s_), kSub);
@@ -4119,7 +4138,7 @@ void App::DriverCard() {
 void App::ExperimentalCard() {
     auto toggle = [&](const char* label, bool on) { return on ? AccentButton(label, ImVec2(0, 0)) : ImGui::Button(label); };
     BeginCard("experimental");
-    Label("EXPERIMENTAL (" OPTM_VERSION ")");
+    Label("TEST FEATURES (" OPTM_VERSION ")");   // individual opt-in switches - separate from the build channel badge in the sidebar
     ImGui::Dummy(ImVec2(0, 4 * s_));
     if (toggle(data_.latencyOn ? "Stutter-cause finder: ON" : "Stutter-cause finder: OFF", data_.latencyOn)) {
         data_.latencyOn = !data_.latencyOn;

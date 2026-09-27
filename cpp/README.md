@@ -33,9 +33,24 @@ cmake --build build --config Release
 
 **Linux / WSL** (MinGW-w64): `./build-mingw.sh`
 
+## Release channels
+
+`OPTM_CHANNEL` in `src/version.h` is one line that says which build this is and who it's for. The
+sidebar and About page show it automatically (colored, with a tooltip) - nothing else needs editing.
+
+| Channel | `OPTM_CHANNEL` | Badge | Who it's for |
+|---|---|---|---|
+| **Stable** | `""` | none | Anyone, including friends. The only channel published to GitHub. |
+| **Experimental** | `"experimental"` | amber | You (or anyone who wants new things early). A local build ahead of the next release - its features have each been tried end to end, but not everything is proven on real hardware yet. |
+| **Unstable** | `"unstable"` | red | You only, only while actively working on it with Claude. Something in it may be untested, broken, or mid-edit. Never shared, and not for a game session you care about. |
+
+A build only moves stable -> released once every feature in it has been tested (see each feature's
+notes as it's added, and the sandbox testing rules below). Before that it's experimental; while it's
+being changed and something in it hasn't been tried yet, call it unstable.
+
 ## Releasing
 
-1. Raise `OPTM_VERSION` and `OPTM_VERSION_RC` in `src/version.h`.
+1. Set `OPTM_CHANNEL` to `""` in `src/version.h` (see above) and raise `OPTM_VERSION` / `OPTM_VERSION_RC`.
 2. Commit and push (the front page is the `README.md` at the repo root).
 3. Double-click **Publish-Release.bat**. It builds, asks what changed, and publishes a GitHub release
    with `ProjectOptM.exe`.
