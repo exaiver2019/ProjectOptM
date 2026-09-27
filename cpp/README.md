@@ -121,7 +121,7 @@ again when the app starts. Restarting into a new build doesn't revert them.
 
 ## In-game overlay
 
-The **Overlay** page (or Overlay on the Home page, or Ctrl+Alt+O) shows FPS and any of: 1% low,
+The **Overlay** page (or Ctrl+Alt+O) shows FPS and any of: 1% low,
 frametime, a mini frametime graph (last 4 s, spikes in amber), GPU usage + temperature, VRAM, CPU usage, RAM -
 4 times a second. Its spot is set in the page's **Position** card: a picture of your screen (its real shape,
 the game's monitor while one runs) with the overlay drawn at its real size - drag it, click anywhere to move it

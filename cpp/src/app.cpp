@@ -1317,14 +1317,8 @@ void App::PerfCard() {
     if (live) ImGui::TextColored(kSub, "Frametime   %.1f ms", st.frametime); else ImGui::TextColored(kSub, "Frametime   --");
     ImGui::EndGroup();
     const char* tl = data_.fpsOn ? "Graph: ON" : "Graph: OFF";
-    const char* ol = data_.overlayOn ? "Overlay: ON" : "Overlay: OFF";
-    float pad = ImGui::GetStyle().FramePadding.x * 2;
-    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(tl).x - ImGui::CalcTextSize(ol).x - pad * 2 - 8 * s_);
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(tl).x - ImGui::GetStyle().FramePadding.x * 2);
     ImGui::SetCursorPosY(top);
-    if (ImGui::Button(ol)) ToggleOverlay();
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Shows FPS, 1%% low and frametime in a corner of your game (Ctrl+Alt+O).\nMore options on the Overlay page.");
-    ImGui::SameLine(0, 8 * s_);
     if (ImGui::Button(tl)) {
         data_.fpsOn = !data_.fpsOn;
         data_.SaveConfig();
