@@ -91,7 +91,7 @@ void App::Init(HWND hwnd, float dpiScale) {
     startMs_ = Ms();
     selfPath_ = util::SelfPath();   // before any rename: Windows reports the renamed path afterwards
     std::string cmd = util::Lower(util::Narrow(GetCommandLineW()));
-    const char* pages[] = { "home", "games", "tweaks", "system", "activity", "settings" };
+    const char* pages[] = { "home", "games", "sessions", "overlay", "tweaks", "system", "activity", "settings" };
     for (int i = 0; i < PageCount; i++)
         if (cmd.find(std::string("--page ") + pages[i]) != std::string::npos) page_ = (Page)i;
 
@@ -908,7 +908,7 @@ void App::Render() {
     animNext_ = false;
     marks_.clear();
 
-    // Ctrl+1..5 switches tabs; Ctrl + / - / 0 changes the interface size
+    // Ctrl+1..8 switches tabs; Ctrl + / - / 0 changes the interface size
     if (io.KeyCtrl && !io.WantTextInput) {
         for (int i = 0; i < PageCount; i++)
             if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_Keypad1 + i), false)) page_ = (Page)i;
@@ -939,7 +939,7 @@ void App::Render() {
     ImGui::BeginChild("content", ImVec2(io.DisplaySize.x - ImGui::GetCursorPosX() - pad, h), 0, ImGuiWindowFlags_NoScrollbar);
     StatusBar();
     ImGui::Dummy(ImVec2(0, 4 * s_));
-    static const char* titles[] = { "Home", "Games", "Tweaks", "System", "Activity", "Settings" };
+    static const char* titles[] = { "Home", "Games", "Sessions", "Overlay", "Tweaks", "System", "Activity", "Settings" };
     ImGui::PushFont(fontTitle_);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4 * s_);
     ImGui::TextUnformatted(titles[page_]);
@@ -961,6 +961,8 @@ void App::Render() {
     switch (page_) {
         case Home: PageHome(); break;
         case Games: PageGames(); break;
+        case Sessions: PageSessions(); break;
+        case Overlay: PageOverlay(); break;
         case System: PageSystem(); break;
         case Activity: PageActivity(); break;
         case Settings: PageSettings(); break;
@@ -997,7 +999,7 @@ void App::Mark(const char* key) {
 
 namespace {
 struct TourStep { int page; const char* mark; const char* title; const char* text; };
-// page numbers follow App::Page: Home 0, Games 1, Tweaks 2, System 3, Activity 4, Settings 5
+// page numbers follow App::Page: Home 0, Games 1, Sessions 2, Overlay 3, Tweaks 4, System 5, Activity 6, Settings 7
 const TourStep kTour[] = {
     { 0, "", "Welcome to Project OptM",
       "Project OptM spots the game you're playing and tunes Windows for it - the best CPU cores, priorities, background apps "
@@ -1005,17 +1007,17 @@ const TourStep kTour[] = {
     { 0, "status", "What's happening right now",
       "This bar shows the game being optimized and what was done for it. AUTO-OPTIMIZE turns everything on or off." },
     { 0, "nav", "Pages",
-      "Home, Games, Tweaks, System, Activity and Settings. Ctrl + 1 to 6 jumps straight to one." },
+      "Home, Games, Sessions, Overlay, Tweaks, System, Activity and Settings. Ctrl + 1 to 8 jumps straight to one." },
     { 0, "perf", "Live performance",
-      "While a game runs you see its FPS, 1% lows and a frametime graph. Every session is saved with its playtime and FPS, "
-      "so you can see how a game improves." },
+      "While a game runs you see its FPS, 1% lows and a frametime graph here. Every session is saved with its playtime and FPS "
+      "on the Sessions page, so you can see how a game improves - and the Overlay page puts the numbers over the game itself." },
     { 1, "games", "Your games",
       "Every game with a profile, A to Z. Games you haven't set up are added automatically the first time they start - look "
       "for the NEW tag.\n\nCtrl + F searches, PLAY launches a game, and the (i) button shows exactly what gets changed for it." },
-    { 2, "presets", "Tweaks",
+    { 4, "presets", "Tweaks",
       "Pick Safe, Balanced or Aggressive, or make your own preset. Click any tweak to read what it does, its pros and its cons. "
       "Tweaks are applied when a game starts and undone when it closes." },
-    { 3, "checks", "Health checks",
+    { 5, "checks", "Health checks",
       "Checks your RAM speed, refresh rate, drivers, Game Mode and more for your exact hardware. Outlined checks can be "
       "fixed with one click." },
     { 0, "footer", "Undo everything, any time",
@@ -1165,8 +1167,8 @@ void App::Sidebar(float height) {
     ImGui::Dummy(ImVec2(0, 14 * s_));
 
     // navigation
-    static const char* names[] = { "Home", "Games", "Tweaks", "System", "Activity", "Settings" };
-    static const unsigned icons[] = { 0xE80F, 0xE7FC, 0xE9E9, 0xE7F4, 0xE81C, 0xE713 };
+    static const char* names[] = { "Home", "Games", "Sessions", "Overlay", "Tweaks", "System", "Activity", "Settings" };
+    static const unsigned icons[] = { 0xE80F, 0xE7FC, 0xE823, 0xE890, 0xE9E9, 0xE7F4, 0xE81C, 0xE713 };
     ImDrawList* dl = ImGui::GetWindowDrawList();
     int warns = (int)std::count_if(checks_.begin(), checks_.end(), [](const Check& c) { return c.state == Check::Warn; });
     // highlights go on a layer under the icons and labels, so the selection can glide between tabs
@@ -1324,7 +1326,7 @@ void App::PerfCard() {
     ImGui::SetCursorPosY(top);
     if (ImGui::Button(ol)) ToggleOverlay();
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Shows FPS, 1%% low and frametime in a corner of your game (Ctrl+Alt+O).\nMore options in Settings > In-game overlay.");
+        ImGui::SetTooltip("Shows FPS, 1%% low and frametime in a corner of your game (Ctrl+Alt+O).\nMore options on the Overlay page.");
     ImGui::SameLine(0, 8 * s_);
     if (ImGui::Button(tl)) {
         data_.fpsOn = !data_.fpsOn;
@@ -1394,22 +1396,35 @@ void App::PerfCard() {
 }
 
 void App::PageHome() {
+    // just what's happening now - sessions, overlay and hardware each have their own page
+    PerfCard();
+    Mark("perf");
+}
+
+// ------------------------------------------------------------ Sessions
+void App::PageSessions() {
     float avail = ImGui::GetContentRegionAvail().x;
     float right = 300 * s_;
 
-    ImGui::BeginChild("homeL", ImVec2(avail - right - 14 * s_, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
-    PerfCard();
-    Mark("perf");
-    ImGui::Dummy(ImVec2(0, 6 * s_));
-
+    ImGui::BeginChild("sessL", ImVec2(avail - right - 14 * s_, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
     BeginCard("recent");
-    Label("RECENT SESSIONS");
+    std::string query = util::Lower(util::Trim(sessionSearch_));
+    float searchW = 240 * s_;
+    ImGui::AlignTextToFramePadding();
+    Label("ALL SESSIONS");
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - searchW);
+    ImGui::SetNextItemWidth(searchW);
+    ImGui::InputTextWithHint("##sesssearch", "Search by game", sessionSearch_, sizeof(sessionSearch_));
     ImGui::Dummy(ImVec2(0, 4 * s_));
     if (data_.history.empty()) ImGui::TextColored(kDim, "No sessions yet - play a game and it shows up here.");
     int shown = 0;
-    for (int i = (int)data_.history.size() - 1; i >= 0 && shown < 12; i--, shown++) {
+    for (int i = (int)data_.history.size() - 1; i >= 0; i--) {
         const Session& ses = data_.history[i];
-        float rowX = ImGui::GetContentRegionAvail().x;
+        if (!query.empty() && util::Lower(ses.game).find(query) == std::string::npos) continue;
+        shown++;
+        ImGui::PushID(i);
+        ImVec2 top = ImGui::GetCursorScreenPos();
+        float rowW = ImGui::GetContentRegionAvail().x;
         ImGui::BeginGroup();
         ImGui::PushFont(fontBold_);
         ImGui::TextUnformatted(ses.game.c_str());
@@ -1426,33 +1441,37 @@ void App::PageHome() {
         }
         ImGui::TextColored(kDim, "%s", sub.c_str());
         ImGui::EndGroup();
+        float rowBottom = ImGui::GetItemRectMax().y;   // the two-line name + date block
         std::string dur = util::FormatDuration(ses.minutes);
-        ImGui::SameLine(rowX - ImGui::CalcTextSize(dur.c_str()).x);
+        ImGui::SameLine(ImGui::GetCursorStartPos().x + rowW - ImGui::CalcTextSize(dur.c_str()).x);
         ImGui::TextColored(kSub, "%s", dur.c_str());
+        // the whole row opens that game's history
+        ImVec2 bottom(top.x + rowW, std::max(rowBottom, ImGui::GetItemRectMax().y));
+        ImGui::SetCursorScreenPos(top);
+        if (ImGui::InvisibleButton("row", ImVec2(rowW, bottom.y - top.y))) historyGame_ = ses.game;
+        if (ImGui::IsItemHovered()) {
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(top.x - 6 * s_, top.y - 2 * s_), ImVec2(bottom.x + 6 * s_, bottom.y + 2 * s_),
+                                                      U32(Alpha(g_chip, 0.45f)), g_btnR);
+            ImGui::SetTooltip("%s - every session and its FPS trend", ses.game.c_str());
+        }
         ImGui::Dummy(ImVec2(0, 2 * s_));
+        ImGui::PopID();
     }
+    if (!data_.history.empty() && !shown) ImGui::TextColored(kDim, "No sessions for a game matching that.");
     EndCard();
     ImGui::EndChild();
 
     ImGui::SameLine(0, 14 * s_);
-    ImGui::BeginChild("homeR", ImVec2(right, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
-    BeginCard("hw");
-    Label("YOUR HARDWARE");
+    ImGui::BeginChild("sessR", ImVec2(right, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
+    BeginCard("totals");
+    Label("ALL TIME");
     ImGui::Dummy(ImVec2(0, 2 * s_));
-    ImGui::PushTextWrapPos(0);
-    ImGui::TextUnformatted(sys_.cpuName.c_str());
-    if (!sys_.gpus.empty()) ImGui::TextUnformatted(sys_.gpus[0].name.c_str());
-    if (sys_.dispHz > 1) ImGui::TextColored(kSub, "%u GB %s, %d Hz display", sys_.ramGB, sys_.ramType.c_str(), sys_.dispHz);
-    else ImGui::TextColored(kSub, "%u GB %s", sys_.ramGB, sys_.ramType.c_str());
-    ImGui::PopTextWrapPos();
-    ImGui::Dummy(ImVec2(0, 2 * s_));
-    int warns = (int)std::count_if(checks_.begin(), checks_.end(), [](const Check& c) { return c.state == Check::Warn; });
-    ImVec2 dp = ImGui::GetCursorScreenPos();
-    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(dp.x + 4 * s_, dp.y + ImGui::GetTextLineHeight() / 2 + 1), 4 * s_, U32(warns ? kAmber : kGreen), 12);
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14 * s_);
-    if (warns) ImGui::TextColored(kSub, "%d check%s need%s attention", warns, warns == 1 ? "" : "s", warns == 1 ? "s" : "");
-    else ImGui::TextColored(kSub, "All checks passed");
-    if (ImGui::Button("View system")) page_ = System;
+    double total = 0;
+    for (auto& [g, m] : data_.playtime) total += m;
+    ImGui::PushFont(fontBold_);
+    ImGui::TextUnformatted(util::FormatHours(total).c_str());
+    ImGui::PopFont();
+    ImGui::TextColored(kSub, "played over %s, %s", Plural(data_.history.size(), "session").c_str(), Plural(data_.playtime.size(), "game").c_str());
     EndCard();
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
@@ -1464,7 +1483,7 @@ void App::PageHome() {
     if (topList.empty()) ImGui::TextColored(kDim, "Nothing yet");
     double mx = topList.empty() ? 1 : std::max(1.0, topList[0].second);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    for (size_t i = 0; i < topList.size() && i < 5; i++) {
+    for (size_t i = 0; i < topList.size() && i < 8; i++) {
         float w = ImGui::GetContentRegionAvail().x;
         std::string hrs = util::FormatHours(topList[i].second);
         ImGui::TextUnformatted(topList[i].first.c_str());
@@ -1478,7 +1497,6 @@ void App::PageHome() {
     EndCard();
     ImGui::EndChild();
 }
-
 // ------------------------------------------------------------ Games
 void App::PageGames() {
     // A-Z, filtered by the search box (game name or exe name)
@@ -2333,70 +2351,11 @@ void App::PageActivity() {
     ImGui::EndChild();
 }
 
-// ------------------------------------------------------------ Settings
-void App::PageSettings() {
-    float w = std::min(ImGui::GetContentRegionAvail().x, 680 * s_);
-    ImGui::BeginChild("settingsCol", ImVec2(w, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
+// ------------------------------------------------------------ Overlay
+void App::PageOverlay() {
+    float w = std::min(ImGui::GetContentRegionAvail().x, 760 * s_);
+    ImGui::BeginChild("overlayCol", ImVec2(w, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
     auto toggle = [&](const char* label, bool on) { return on ? AccentButton(label, ImVec2(0, 0)) : ImGui::Button(label); };
-
-    BeginCard("optimizing");
-    Label("OPTIMIZING");
-    ImGui::Dummy(ImVec2(0, 4 * s_));
-    if (toggle(data_.autoOptimize ? "Auto-optimize: ON" : "Auto-optimize: OFF", data_.autoOptimize)) ToggleAuto();
-    ImGui::SameLine();
-    if (toggle(data_.autoDetect ? "Detect new games: ON" : "Detect new games: OFF", data_.autoDetect)) {
-        data_.autoDetect = !data_.autoDetect;
-        data_.SaveConfig();
-        Log(data_.autoDetect ? "Detecting new games when they start" : "New-game detection off - only games in your profiles are optimized");
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("When a game without a profile starts (from Steam, Epic, GOG, Ubisoft, Xbox, EA, Riot or Windows' game list),\nit's added to your games and optimized automatically.");
-    ImGui::SameLine();
-    if (toggle(data_.fpsOn ? "FPS graph: ON" : "FPS graph: OFF", data_.fpsOn)) {
-        data_.fpsOn = !data_.fpsOn;
-        data_.SaveConfig();
-        if (data_.fpsOn && opt_.Active()) SessionStarted(*opt_.Active());
-        if (!data_.fpsOn) frames_.Stop();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Panic: undo everything")) Panic();
-    if (toggle(data_.revertOnExit ? "Restore everything on exit: ON" : "Restore everything on exit: OFF", data_.revertOnExit)) {
-        data_.revertOnExit = !data_.revertOnExit;
-        data_.SaveConfig();
-        Log(data_.revertOnExit ? "Exiting now puts every setting back, including launch priority, GPU preference and fullscreen optimizations"
-                               : "Launch priority, GPU preference and fullscreen optimizations now stay set after you exit");
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("ON: when you exit Project OptM, your PC goes back exactly to how it was - including the per-game\n"
-                          "launch priority, GPU preference and fullscreen optimization settings. They're set again when it starts.\n"
-                          "OFF: those three stay set, so they work even while Project OptM isn't running.");
-    ImGui::SameLine();
-    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
-    ImGui::BeginDisabled(testCopy);
-    if (toggle(startWithWindows_ ? "Start with Windows: ON" : "Start with Windows: OFF", startWithWindows_)) {
-        std::string err;
-        bool on = !startWithWindows_;
-        if (on ? autostart::Enable(selfPath_, err) : autostart::Disable(err)) {
-            startWithWindows_ = on;
-            Log(on ? "Start with Windows on - Project OptM starts in the tray when you sign in, as admin, without the Windows prompt"
-                   : "Start with Windows off");
-        } else Log(std::string("Couldn't turn Start with Windows ") + (on ? "on" : "off") + ": " + err);
-    }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", testCopy ? "Not available in a test copy (--data-dir)"
-                                         : "Starts Project OptM in the tray when you sign in to Windows - already running as\n"
-                                           "administrator, so there's no \"allow this app to make changes?\" prompt.\n"
-                                           "Uses a Task Scheduler task; turning this off removes it.");
-    ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(kSub, "Everything Project OptM changes is put back when the game closes, when you exit, or instantly with %s.%s",
-                       hotkey_ ? "Ctrl+Alt+End" : "the tray menu",
-                       data_.revertOnExit ? "" : " (Launch priority, GPU preference and fullscreen optimizations stay set after you exit.)");
-    ImGui::TextColored(kDim, "Game checks run every %d s. Timing, power plan, background apps and more are set in the [Settings] block of your profiles file.", data_.settings.poll);
-    ImGui::PopTextWrapPos();
-    EndCard();
-    ImGui::Dummy(ImVec2(0, 6 * s_));
-
     BeginCard("overlay");
     Label("IN-GAME OVERLAY");
     ImGui::Dummy(ImVec2(0, 4 * s_));
@@ -2472,6 +2431,72 @@ void App::PageSettings() {
                              "(nothing is loaded into the game), so it shows over windowed, borderless and most modern "
                              "fullscreen games, but not old exclusive fullscreen. Temperature shows if your graphics driver reports it.",
                        overlayHotkey_ ? "Ctrl+Alt+O" : "The switch above (Ctrl+Alt+O is taken by another app)");
+    ImGui::PopTextWrapPos();
+    EndCard();
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+
+    ImGui::EndChild();
+}
+// ------------------------------------------------------------ Settings
+void App::PageSettings() {
+    float w = std::min(ImGui::GetContentRegionAvail().x, 680 * s_);
+    ImGui::BeginChild("settingsCol", ImVec2(w, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
+    auto toggle = [&](const char* label, bool on) { return on ? AccentButton(label, ImVec2(0, 0)) : ImGui::Button(label); };
+
+    BeginCard("optimizing");
+    Label("OPTIMIZING");
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    if (toggle(data_.autoOptimize ? "Auto-optimize: ON" : "Auto-optimize: OFF", data_.autoOptimize)) ToggleAuto();
+    ImGui::SameLine();
+    if (toggle(data_.autoDetect ? "Detect new games: ON" : "Detect new games: OFF", data_.autoDetect)) {
+        data_.autoDetect = !data_.autoDetect;
+        data_.SaveConfig();
+        Log(data_.autoDetect ? "Detecting new games when they start" : "New-game detection off - only games in your profiles are optimized");
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("When a game without a profile starts (from Steam, Epic, GOG, Ubisoft, Xbox, EA, Riot or Windows' game list),\nit's added to your games and optimized automatically.");
+    ImGui::SameLine();
+    if (toggle(data_.fpsOn ? "FPS graph: ON" : "FPS graph: OFF", data_.fpsOn)) {
+        data_.fpsOn = !data_.fpsOn;
+        data_.SaveConfig();
+        if (data_.fpsOn && opt_.Active()) SessionStarted(*opt_.Active());
+        if (!data_.fpsOn) frames_.Stop();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Panic: undo everything")) Panic();
+    if (toggle(data_.revertOnExit ? "Restore everything on exit: ON" : "Restore everything on exit: OFF", data_.revertOnExit)) {
+        data_.revertOnExit = !data_.revertOnExit;
+        data_.SaveConfig();
+        Log(data_.revertOnExit ? "Exiting now puts every setting back, including launch priority, GPU preference and fullscreen optimizations"
+                               : "Launch priority, GPU preference and fullscreen optimizations now stay set after you exit");
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("ON: when you exit Project OptM, your PC goes back exactly to how it was - including the per-game\n"
+                          "launch priority, GPU preference and fullscreen optimization settings. They're set again when it starts.\n"
+                          "OFF: those three stay set, so they work even while Project OptM isn't running.");
+    ImGui::SameLine();
+    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
+    ImGui::BeginDisabled(testCopy);
+    if (toggle(startWithWindows_ ? "Start with Windows: ON" : "Start with Windows: OFF", startWithWindows_)) {
+        std::string err;
+        bool on = !startWithWindows_;
+        if (on ? autostart::Enable(selfPath_, err) : autostart::Disable(err)) {
+            startWithWindows_ = on;
+            Log(on ? "Start with Windows on - Project OptM starts in the tray when you sign in, as admin, without the Windows prompt"
+                   : "Start with Windows off");
+        } else Log(std::string("Couldn't turn Start with Windows ") + (on ? "on" : "off") + ": " + err);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", testCopy ? "Not available in a test copy (--data-dir)"
+                                         : "Starts Project OptM in the tray when you sign in to Windows - already running as\n"
+                                           "administrator, so there's no \"allow this app to make changes?\" prompt.\n"
+                                           "Uses a Task Scheduler task; turning this off removes it.");
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(kSub, "Everything Project OptM changes is put back when the game closes, when you exit, or instantly with %s.%s",
+                       hotkey_ ? "Ctrl+Alt+End" : "the tray menu",
+                       data_.revertOnExit ? "" : " (Launch priority, GPU preference and fullscreen optimizations stay set after you exit.)");
+    ImGui::TextColored(kDim, "Game checks run every %d s. Timing, power plan, background apps and more are set in the [Settings] block of your profiles file.", data_.settings.poll);
     ImGui::PopTextWrapPos();
     EndCard();
     ImGui::Dummy(ImVec2(0, 6 * s_));

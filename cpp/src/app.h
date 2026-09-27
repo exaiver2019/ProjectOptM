@@ -50,7 +50,7 @@ public:
     void ShowMain();
 
 private:
-    enum Page { Home, Games, Tweaks, System, Activity, Settings, PageCount };
+    enum Page { Home, Games, Sessions, Overlay, Tweaks, System, Activity, Settings, PageCount };
 
     // setup
     void LoadFonts();
@@ -86,6 +86,8 @@ private:
     void StatusBar();
     void PageHome();
     void PageGames();
+    void PageSessions();
+    void PageOverlay();
     void PageSystem();
     void PageActivity();
     void PageSettings();
@@ -163,6 +165,9 @@ private:
     std::string editError_;
     char exeBuf_[256] = {}, boostBuf_[256] = {}, keepBuf_[256] = {}, closeBuf_[256] = {};
 
+    // Sessions page
+    char sessionSearch_[64] = {};
+
     // Tweaks page
     char tweakSearch_[64] = {};
     std::string tweakCat_ = "All";
@@ -183,7 +188,7 @@ private:
     std::string fbStatus_;
 
     // in-game overlay
-    Overlay overlay_;
+    ::Overlay overlay_;            // (:: - "Overlay" is also a page name in here)
     Sensors sensors_;              // GPU / VRAM / CPU / RAM readings for it
     HWND gameWnd_ = nullptr;
     uint64_t lastOverlay_ = 0, lastGameWnd_ = 0;

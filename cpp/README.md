@@ -121,7 +121,7 @@ again when the app starts. Restarting into a new build doesn't revert them.
 
 ## In-game overlay
 
-Settings > **In-game overlay** (or Overlay on the Home page, or Ctrl+Alt+O) shows FPS and any of: 1% low,
+The **Overlay** page (or Overlay on the Home page, or Ctrl+Alt+O) shows FPS and any of: 1% low,
 frametime, a mini frametime graph (last 4 s, spikes in amber), GPU usage + temperature, VRAM, CPU usage, RAM -
 4 times a second. **Move overlay** makes it draggable (double-click or Done moving to finish); its spot is
 saved as 0..1 across the screen, so it lands in the same place on any monitor. Background opacity 0-100%
@@ -136,7 +136,7 @@ temperature from `D3DKMTQueryAdapterInfo(ADAPTERPERFDATA)` when the driver repor
 Nothing is injected into the game (unlike RTSS/Afterburner, which hook Present - anti-cheat risk). The
 trade-off: it only shows over windowed, borderless and flip-model "fullscreen" games, not true exclusive
 fullscreen. It shows only while the game window is in front, hides when FPS capture is blocked, and by
-default stays off over anti-cheat games (Settings > Anti-cheat games). (src/overlay.*)
+default stays off over anti-cheat games (Overlay page > Anti-cheat games). (src/overlay.*)
 
 ## Start with Windows
 
@@ -191,7 +191,7 @@ Handy for testing without touching your real setup:
 
 | Switch | What it does |
 |---|---|
-| `--page home\|games\|system\|activity\|settings` | open on that page |
+| `--page home\|games\|sessions\|overlay\|tweaks\|system\|activity\|settings` | open on that page |
 | `--data-dir <folder>` (or `OPTM_DATA_DIR`) | use another data folder instead of `%APPDATA%\ProjectOptM` |
 | `--log-file <file>` (or `OPTM_LOG_FILE`) | copy the activity log to a file |
 | `--screenshot <file.png>` `--shot-delay <ms>` `--exit-after <ms>` | save the window to a PNG, then exit |
