@@ -160,6 +160,15 @@ void App::Init(HWND hwnd, float dpiScale) {
         LocalFree(argv);
     }
     if (!editGame_.empty() && cmd.find("--save-settings") != std::string::npos) SaveGameSettings();   // developer check: profiles.ini round-trip
+    if (cmd.find("--feedback") != std::string::npos) { OpenFeedback(); fbPreview_ = cmd.find("--feedback-preview") != std::string::npos; }
+    if (!util::EnvVar(L"OPTM_FEEDBACK_TEST").empty()) {   // developer check: build the link (logged, not opened)
+        snprintf(fbTitle_, sizeof(fbTitle_), "%s", util::Narrow(util::EnvVar(L"OPTM_FEEDBACK_TEST")).c_str());
+        snprintf(fbDetails_, sizeof(fbDetails_), "Test report from C:\\Users\\SomeOne\\Desktop\\x.exe and c:/users/other/a - please ignore.");
+        fbLog_ = cmd.find("--feedback-long") != std::string::npos;
+        if (fbLog_) for (int i = 0; i < 30; i++) strncat_s(fbDetails_, " A long report line that pushes the link past GitHub's limit.", _TRUNCATE);
+        SendFeedback();
+        Log("Feedback status: " + fbStatus_);
+    }
     // first start of this version: show the welcome tour (not in screenshot test runs)
     if (!data_.tourDone && tourStep_ < 0 && cmd.find("--screenshot") == std::string::npos) StartTour();
 
@@ -502,6 +511,7 @@ void App::OnTray(LPARAM lp) {
     AppendMenuW(m, MF_STRING, 1, L"Open");
     AppendMenuW(m, MF_STRING, 2, L"Panic: undo everything now");
     AppendMenuW(m, MF_STRING | (data_.autoOptimize ? MF_CHECKED : 0), 3, L"Auto-optimize");
+    AppendMenuW(m, MF_STRING, 5, L"Send feedback...");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 4, L"Exit");
     POINT pt; GetCursorPos(&pt);
@@ -518,6 +528,7 @@ void App::OnCommand(WPARAM id) {
         case 2: Panic(); break;
         case 3: ToggleAuto(); break;
         case 4: DestroyWindow(hwnd_); break;
+        case 5: ShowMain(); OpenFeedback(); break;
     }
 }
 
@@ -844,6 +855,7 @@ void App::Render() {
     ImGui::EndChild();
     HistoryPopup();
     GameSettingsPopup();
+    FeedbackPopup();
     ImGui::End();
     TourOverlay();
 }
@@ -1074,8 +1086,22 @@ void App::Sidebar(float height) {
     dl->ChannelsMerge();
     marks_["nav"] = ImVec4(navTop.x, navTop.y, navTop.x + navW, navBottom);
 
-    // footer
+    // footer: Send feedback + the panic hint
     float footerH = 44 * s_;
+    ImGui::SetCursorPosY(height - footerH - ImGui::GetFrameHeight() - 12 * s_);
+    std::string fbLabel = Icon(0xED15);   // Segoe "Feedback"
+    {
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float w = ImGui::GetContentRegionAvail().x, h = ImGui::GetFrameHeight();
+        if (ImGui::InvisibleButton("feedback", ImVec2(w, h))) OpenFeedback();
+        bool hov = ImGui::IsItemHovered();
+        if (hov) ImGui::SetTooltip("Report a bug, suggest an idea or ask for a game");
+        dl = ImGui::GetWindowDrawList();
+        dl->AddRect(p, ImVec2(p.x + w, p.y + h), U32(hov ? Lighten(g_line, 0.15f) : g_line), g_btnR);
+        dl->AddText(fontIcons_, fontIcons_->FontSize * 0.85f, ImVec2(p.x + 14 * s_, p.y + (h - fontIcons_->FontSize * 0.85f) / 2), U32(hov ? kText : kSub), fbLabel.c_str());
+        dl->AddText(ImVec2(p.x + 40 * s_, p.y + (h - ImGui::GetTextLineHeight()) / 2), U32(hov ? kText : kSub), "Send feedback");
+        Mark("feedback");
+    }
     ImGui::SetCursorPosY(height - footerH);
     ImGui::PushStyleColor(ImGuiCol_Text, kDim);
     ImGui::PushTextWrapPos(0);
@@ -1844,12 +1870,255 @@ void App::GameSettingsPopup() {
     else if (close) editGame_.clear();
 }
 
-// ------------------------------------------------------------ System
-void App::PageSystem() {
-    char b[160];
-    BeginCard("specs");
-    Label("YOUR SYSTEM");
+// ------------------------------------------------------------ feedback
+// Feedback becomes a GitHub issue: we fill it in, the user reviews it and clicks Submit in the browser.
+// Nothing is sent from the app itself.
+namespace {
+const char* kFeedbackTypes[] = { "Bug", "Idea", "Game request", "Other" };
+const char* kFeedbackHints[] = {
+    "What happened, and what did you expect? Steps to make it happen again help a lot.",
+    "What would you like Project OptM to do?",
+    "Which game, and where do you get it (Steam, Epic...)? Its exe name helps if you know it.",
+    "Anything else on your mind.",
+};
+}
+
+void App::OpenFeedback() {
+    feedbackOpen_ = true;
+    fbStatus_.clear();
+    // about the game that's running, or the last one played
+    fbGame_.clear();
+    if (opt_.Active()) fbGame_ = opt_.Active()->name;
+    else
+        for (auto it = data_.history.rbegin(); it != data_.history.rend() && fbGame_.empty(); ++it)
+            for (auto& p : data_.profiles) if (p.name == it->game) { fbGame_ = p.name; break; }
+}
+
+std::string App::FeedbackTitle() const {
+    std::string t = util::Trim(fbTitle_);
+    return "[" + std::string(kFeedbackTypes[fbType_]) + "] " + (t.empty() ? std::string("(no title)") : t);
+}
+
+std::string App::FeedbackBody() const {
+    std::string b;
+    std::string details = util::Trim(fbDetails_);
+    b += details.empty() ? "_(no details)_" : details;
+    b += "\n\n---\n**Project OptM** " OPTM_VERSION;
+    if (!fbGame_.empty()) b += "  |  **Game:** " + fbGame_;
+    b += "\n";
+    auto section = [&](const std::string& title, const std::string& text) {
+        b += "\n<details><summary>" + title + "</summary>\n\n```\n" + text + "```\n</details>\n";
+    };
+    if (fbSpecs_) {
+        std::string s;
+        for (auto& [k, v] : SpecRows()) s += std::string(*k ? k : "GPU") + ": " + v + "\n";
+        s += "Layout: " + sys_.LayoutText() + (sys_.canPin ? ", games pinned to " + sys_.BestLabel() + " (CPU " + SystemInfo::MaskText(sys_.bestMask) + ")" : "") + "\n";
+        if (sys_.microcode) { char m[32]; snprintf(m, sizeof(m), "0x%X", sys_.microcode); s += std::string("Microcode: ") + m + "\n"; }
+        if (sys_.hasBattery) s += "Laptop (has a battery)\n";
+        section("PC specs", s);
+    }
+    const GameProfile* game = nullptr;
+    for (auto& p : data_.profiles) if (p.name == fbGame_) game = &p;
+    if (game && fbGameSettings_) {
+        const GameProfile& p = *game;
+        std::string s = "exe: " + util::Join(p.exes, ", ") + "\n";
+        s += "Summary: " + opt_.Summary(p) + "\n";
+        if (p.antiCheat) s += "Anti-cheat safe mode: yes\n";
+        s += "Priority: " + PriorityLabel(p.priority) + "  |  Cores: " + (p.softPin ? "Prefer" : p.cores) + "  |  Launch priority: " + PriorityLabel(p.launchPriority) + "\n";
+        if (p.ramCleanupMins) s += "RAM cleanup: every " + std::to_string(p.ramCleanupMins) + " min\n";
+        if (!p.boost.empty()) s += "Boost: " + util::Join(p.boost, ", ") + "\n";
+        if (!p.close.empty()) s += "Close: " + util::Join(p.close, ", ") + "\n";
+        if (!p.keep.empty()) s += "Keep: " + util::Join(p.keep, ", ") + "\n";
+        std::vector<std::string> on;
+        for (auto& id : tweakset::Active(data_, sys_, &p)) on.push_back(id);
+        s += "Tweaks: " + tweakset::PresetFor(data_, &p) + (p.tweaks.empty() ? " (Tweaks page)" : " (set for this game)") + " - " + util::Join(on, ", ") + "\n";
+        section("Game settings", s);
+    }
+    if (game && fbFps_) {
+        const Session* last = nullptr;
+        int n = 0;
+        for (auto& h : data_.history) if (h.game == fbGame_) { n++; if (h.avgFps > 0) last = &h; }
+        std::string s;
+        if (last) {
+            char f[160];
+            snprintf(f, sizeof(f), "Last session with FPS: %s, %s, avg %.0f FPS, 1%% low %.0f\n", last->date.c_str(),
+                     util::FormatDuration(last->minutes).c_str(), last->avgFps, last->low1);
+            s = f;
+        } else s = "No FPS recorded for this game yet\n";
+        s += std::to_string(n) + " session(s) in total\n";
+        section("FPS", s);
+    }
+    if (fbLog_ && !log_.empty()) {
+        size_t from = log_.size() > 100 ? log_.size() - 100 : 0;
+        std::string s;
+        for (size_t i = from; i < log_.size(); i++) s += log_[i] + "\n";
+        section("Activity log (last " + std::to_string(log_.size() - from) + " lines)", s);
+    }
+    return util::HidePersonal(b);
+}
+
+void App::SendFeedback() {
+    std::string title = FeedbackTitle(), body = FeedbackBody();
+    std::string base = "https://github.com/" OPTM_UPDATE_REPO "/issues/new?title=" + util::UrlEncode(title) + "&body=";
+    std::string url = base + util::UrlEncode(body);
+    // GitHub turns away very long links (and signing in wraps the link in another, longer one):
+    // then the report goes on the clipboard to paste in
+    if (url.size() > 4000) {
+        ImGui::SetClipboardText(body.c_str());
+        url = base + util::UrlEncode("**Paste your report here (Ctrl+V)** - Project OptM copied it to your clipboard.\n\n");
+        fbStatus_ = "Your report is on the clipboard - paste it into the issue with Ctrl+V, then click Submit.";
+    } else fbStatus_ = "Opened in your browser - check it over and click Submit new issue.";
+    if (!util::EnvVar(L"OPTM_FEEDBACK_TEST").empty()) { Log("Feedback URL (" + std::to_string(url.size()) + " chars): " + url); return; }   // developer check
+    util::OpenAsUser(util::Widen(url));
+    Log("Feedback opened on GitHub: " + title);
+}
+
+void App::FeedbackPopup() {
+    if (!feedbackOpen_) return;
+    if (!ImGui::IsPopupOpen("feedback")) ImGui::OpenPopup("feedback");
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowSize(ImVec2(std::min(760 * s_, io.DisplaySize.x - 60 * s_), std::min(700 * s_, io.DisplaySize.y - 60 * s_)));
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * s_, 16 * s_));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, g_cardR);
+    if (!ImGui::BeginPopupModal("feedback", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar)) {
+        ImGui::PopStyleVar(2);
+        return;
+    }
+    ImGui::PopStyleVar(2);
+    bool close = false;
+
+    ImGui::PushFont(fontTitle_);
+    ImGui::TextUnformatted("Send feedback");
+    ImGui::PopFont();
+    ImGui::TextColored(kSub, "This becomes an issue on Project OptM's GitHub page. You'll see it in your browser before anything is sent.");
     ImGui::Dummy(ImVec2(0, 4 * s_));
+
+    float footerH = ImGui::GetFrameHeight() + 18 * s_;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, g_card2);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * s_, 12 * s_));
+    ImGui::BeginChild("fbbody", ImVec2(0, -footerH), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    if (testScroll_ > 0 && ImGui::GetFrameCount() > 3) ImGui::SetScrollY(testScroll_ * s_);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, g_chip);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, Lighten(g_chip, 0.05f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, Lighten(g_chip, 0.08f));
+
+    // type chips
+    for (int i = 0; i < 4; i++) {
+        if (i) ImGui::SameLine(0, 8 * s_);
+        bool sel = fbType_ == i;
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, sel ? g_accent : g_chip);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, sel ? g_accent : Lighten(g_chip, 0.06f));
+        ImGui::PushStyleColor(ImGuiCol_Text, sel ? TextOn(g_accent) : kSub);
+        if (ImGui::Button(kFeedbackTypes[i])) fbType_ = i;
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar();
+    }
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    float w = ImGui::GetContentRegionAvail().x;
+    ImGui::TextColored(kSub, "Title");
+    ImGui::SetNextItemWidth(w);
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::InputTextWithHint("##fbtitle", "A short summary", fbTitle_, sizeof(fbTitle_));
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    ImGui::TextColored(kSub, "Details");
+    ImGui::InputTextMultiline("##fbdetails", fbDetails_, sizeof(fbDetails_), ImVec2(w, 130 * s_));
+    if (!fbDetails_[0] && !ImGui::IsItemActive()) {   // hint text (multiline boxes have none)
+        ImVec2 p = ImGui::GetItemRectMin();
+        ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + ImGui::GetStyle().FramePadding.x, p.y + ImGui::GetStyle().FramePadding.y), U32(kDim), kFeedbackHints[fbType_]);
+    }
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kSub, "About a game?");
+    ImGui::SameLine(0, 12 * s_);
+    ImGui::SetNextItemWidth(300 * s_);
+    if (ImGui::BeginCombo("##fbgame", fbGame_.empty() ? "No - the app in general" : fbGame_.c_str())) {
+        if (ImGui::Selectable("No - the app in general", fbGame_.empty())) fbGame_.clear();
+        std::vector<std::string> names;
+        for (auto& p : data_.profiles) names.push_back(p.name);
+        std::sort(names.begin(), names.end(), [](const std::string& a, const std::string& b) { return util::Lower(a) < util::Lower(b); });
+        for (auto& n : names) if (ImGui::Selectable(n.c_str(), n == fbGame_)) fbGame_ = n;
+        ImGui::EndCombo();
+    }
+
+    // what to attach
+    ImGui::Dummy(ImVec2(0, 10 * s_));
+    Label("ATTACH (OPTIONAL)");
+    ImGui::Dummy(ImVec2(0, 2 * s_));
+    auto attach = [&](const char* id, bool& v, const char* title, const char* note, bool enabled) {
+        ImGui::BeginDisabled(!enabled);
+        if (Switch(id, v && enabled, enabled)) v = !v;
+        ImGui::EndDisabled();
+        ImGui::SameLine(0, 12 * s_);
+        ImGui::BeginGroup();
+        ImGui::TextColored(enabled ? kText : kDim, "%s", title);
+        ImGui::SameLine(0, 8 * s_);
+        ImGui::TextColored(kDim, "%s", note);
+        ImGui::EndGroup();
+    };
+    bool hasGame = !fbGame_.empty();
+    attach("fb.specs", fbSpecs_, "PC specs", "CPU, GPU, RAM, display, Windows", true);
+    attach("fb.game", fbGameSettings_, "Game settings", hasGame ? "priority, cores, tweaks for this game" : "pick a game above", hasGame);
+    attach("fb.fps", fbFps_, "FPS of the last session", hasGame ? "average and 1% lows" : "pick a game above", hasGame);
+    attach("fb.log", fbLog_, "Recent activity", "the last 100 lines of the Activity page", !log_.empty());
+    ImGui::TextColored(kDim, "Your Windows user name is hidden from file paths. Nothing is sent until you click Submit on GitHub.");
+
+    // preview
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    if (ImGui::Button(fbPreview_ ? "Hide preview" : "Preview what's sent")) fbPreview_ = !fbPreview_;
+    if (fbPreview_) {
+        std::string text = FeedbackTitle() + "\n\n" + FeedbackBody();
+        ImGui::InputTextMultiline("##fbpreview", text.data(), text.size() + 1, ImVec2(w, 260 * s_), ImGuiInputTextFlags_ReadOnly);
+    }
+    ImGui::PopStyleColor(3);
+    ImGui::EndChild();
+
+    // footer: [status]   Copy   Cancel   Open on GitHub
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    bool ready = util::Trim(fbTitle_).size() >= 3;
+    if (!fbStatus_.empty()) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(kGreen, "%s", fbStatus_.c_str());
+    } else if (!ready) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(kDim, "Add a title to continue");
+    }
+    const char* sendLabel = "Open on GitHub";
+    float sendW = ImGui::CalcTextSize(sendLabel).x + 40 * s_;
+    float copyW = ImGui::CalcTextSize("Copy").x + ImGui::GetStyle().FramePadding.x * 2;
+    float cancelW = ImGui::CalcTextSize("Close").x + ImGui::GetStyle().FramePadding.x * 2;
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - sendW - copyW - cancelW - 16 * s_);
+    ImGui::BeginDisabled(!ready);
+    if (ImGui::Button("Copy")) {
+        std::string all = FeedbackTitle() + "\n\n" + FeedbackBody();
+        ImGui::SetClipboardText(all.c_str());
+        fbStatus_ = "Copied - paste it wherever you like.";
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Copy the report instead (for Discord, email...)");
+    ImGui::SameLine(0, 8 * s_);
+    bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (ImGui::Button("Close") || esc) close = true;
+    ImGui::SameLine(0, 8 * s_);
+    ImGui::BeginDisabled(!ready);
+    if (AccentButton(sendLabel, ImVec2(sendW, 0))) SendFeedback();
+    ImGui::EndDisabled();
+
+    if (close) {
+        ImGui::CloseCurrentPopup();
+        feedbackOpen_ = false;
+        if (!fbStatus_.empty() && fbStatus_.rfind("Copied", 0) != 0) { fbTitle_[0] = 0; fbDetails_[0] = 0; }   // sent: start fresh next time
+    }
+    ImGui::EndPopup();
+}
+
+// ------------------------------------------------------------ System
+// CPU / GPU / RAM / display / Windows, as shown on the System page ("" label = another GPU)
+std::vector<std::pair<const char*, std::string>> App::SpecRows() const {
+    char b[160];
     std::vector<std::pair<const char*, std::string>> rows;
     snprintf(b, sizeof(b), "%s  |  %d cores / %d threads  |  ", sys_.cpuName.c_str(), sys_.cores, sys_.threads);
     rows.push_back({ "CPU", b + sys_.LayoutText() });
@@ -1866,6 +2135,14 @@ void App::PageSystem() {
     if (sys_.dispMaxHz > sys_.dispHz && sys_.dispHz > 1) disp += " (supports " + std::to_string(sys_.dispMaxHz) + " Hz)";
     rows.push_back({ "Display", disp });
     rows.push_back({ "Windows", sys_.osName });
+    return rows;
+}
+
+void App::PageSystem() {
+    BeginCard("specs");
+    Label("YOUR SYSTEM");
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    auto rows = SpecRows();
     for (auto& [k, v] : rows) {
         ImGui::TextColored(kDim, "%s", k);
         ImGui::SameLine(90 * s_);

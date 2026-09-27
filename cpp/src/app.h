@@ -96,6 +96,11 @@ private:
     void GameSettingsPopup();
     bool SaveGameSettings();       // false (and says why) if something needs fixing first
     void DeleteGame(const std::string& name);
+    void OpenFeedback();
+    void FeedbackPopup();
+    std::string FeedbackTitle() const;
+    std::string FeedbackBody() const;              // the issue text, personal paths hidden
+    void SendFeedback();                           // opens a filled-in GitHub issue
 
     // animation + tour
     float Anim(const std::string& key, float target, float speed = 14.0f, float init = -1.0f);   // eases toward target
@@ -113,6 +118,7 @@ private:
     bool AccentButton(const char* label, const ImVec2& size);
     void Chips();
     std::vector<std::pair<std::string, std::string>> HardwareLines() const;
+    std::vector<std::pair<const char*, std::string>> SpecRows() const;
 
     // window + scale
     HWND hwnd_ = nullptr;
@@ -159,6 +165,15 @@ private:
 
     // Settings page
     char hexBuf_[16] = {};         // custom accent color
+
+    // feedback (a filled-in GitHub issue)
+    bool feedbackOpen_ = false;
+    int fbType_ = 0;               // Bug / Idea / Game request / Other
+    char fbTitle_[120] = {};
+    char fbDetails_[4096] = {};
+    std::string fbGame_;           // "" = not about a game
+    bool fbSpecs_ = true, fbLog_ = true, fbGameSettings_ = true, fbFps_ = true, fbPreview_ = false;
+    std::string fbStatus_;
 
     // tray + lifetime
     NOTIFYICONDATAW nid_ = {};

@@ -119,6 +119,17 @@ applies at launch: launch priority (IFEO), fullscreen optimizations and the dedi
 your own previous GPU preference is recorded (`GpuManaged` in settings.json) and put back. They're set
 again when the app starts. Restarting into a new build doesn't revert them.
 
+## Feedback
+
+**Send feedback** (bottom of the sidebar, or the tray menu) opens a form: type (Bug / Idea / Game
+request / Other), title, details and an optional game, plus switches for what to attach - PC specs, that
+game's settings, its last session's FPS, and the last 100 activity lines. A preview shows the exact text.
+It becomes a GitHub issue on `OPTM_UPDATE_REPO`: the app opens a filled-in "new issue" page and the user
+clicks Submit there, so nothing is sent from the app and no token is in the exe. Attachments sit in
+collapsed `<details>` blocks. `C:\Users\<name>` in any path becomes `C:\Users\<you>`. Reports too long
+for a link (over ~4000 characters - GitHub's sign-in page wraps the link again) go on the clipboard, and
+the issue page says to paste them. **Copy** puts the report on the clipboard for Discord, email and so on.
+
 ## Intel and laptops
 
 - **Soft core pinning** (tweak, or `cores = Prefer` per game): games are steered to the P-cores with
@@ -159,6 +170,8 @@ Handy for testing without touching your real setup:
 | `--zoom-after <percent>` | change the interface size 1 s after start (checks live resizing) |
 | `--history <game>` | open that game's history window |
 | `--game-settings <game>` (`--save-settings`) | open that game's settings (and save them at once - a profiles.ini round-trip check) |
+| `--feedback` (`--feedback-preview`) | open the feedback form (with its preview) |
+| `OPTM_FEEDBACK_TEST=<title>` | build a feedback link at start and log it instead of opening it (`--feedback-long` tests the clipboard path) |
 | `OPTM_UPDATE_AS=<version>` | pretend to be an older version when checking for updates |
 
 Set `__COMPAT_LAYER=RunAsInvoker` to start it without the admin prompt (anything needing admin then fails and is logged).

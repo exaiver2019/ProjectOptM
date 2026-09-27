@@ -199,4 +199,32 @@ void OpenAsUser(const std::wstring& target) {
     ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
 }
 
+std::string UrlEncode(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string o;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += (char)c;
+        else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
+    }
+    return o;
+}
+
+std::string HidePersonal(std::string s) {
+    // any "X:\Users\<name>" (either slash) - covers the profile folder and its 8.3 short form
+    std::string l = Lower(s);
+    for (size_t i = 0;;) {
+        size_t at = std::min(l.find(":\\users\\", i), l.find(":/users/", i));
+        if (at == std::string::npos) break;
+        size_t start = at + 8, end = start;
+        while (end < s.size() && s[end] != '\\' && s[end] != '/' && s[end] != '"' && s[end] != '\r' && s[end] != '\n') end++;
+        std::string name = s.substr(start, end - start);
+        if (Lower(name) != "public" && Lower(name) != "<you>") {
+            s.replace(start, end - start, "<you>");
+            l = Lower(s);
+        }
+        i = start + 1;
+    }
+    return s;
+}
+
 }  // namespace util

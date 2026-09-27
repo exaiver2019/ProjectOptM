@@ -33,5 +33,7 @@ std::string  FormatHours(double minutes);              // "52.9h" / "40m"
 std::string  FormatDuration(double minutes);           // "1h 5m" / "12m"
 std::string  NowStamp(const char* fmt);                // strftime of the local time
 void         OpenAsUser(const std::wstring& target);    // opens a file/link/folder through Explorer (not as admin)
+std::string  UrlEncode(const std::string& s);           // for query strings (UTF-8, %XX)
+std::string  HidePersonal(std::string s);               // "C:\Users\Sam\..." -> "C:\Users\<you>\..." (also the 8.3 short name)
 
 }  // namespace util

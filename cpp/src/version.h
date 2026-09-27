@@ -1,7 +1,7 @@
 // Project OptM version - bump for every release (also used by resource.rc).
 #pragma once
-#define OPTM_VERSION       "2.0.0"
-#define OPTM_VERSION_RC    2, 0, 0, 0
+#define OPTM_VERSION       "2.1.0"
+#define OPTM_VERSION_RC    2, 1, 0, 0
 
 // GitHub "user/repo" the releases live in; empty turns update checks off
 #ifndef OPTM_UPDATE_REPO

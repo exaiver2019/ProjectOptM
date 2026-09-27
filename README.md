@@ -24,6 +24,7 @@ Version 2 is a native app: one small ProjectOptM.exe that starts instantly and i
 - **Restores everything:** when a game closes, when you exit, or instantly with the panic button (Ctrl+Alt+End or the tray menu).
 - **Customization:** accent colors, backgrounds (including OLED black), corner styles and interface size.
 - **Updates:** the app updates itself when a new version is released.
+- **Feedback:** report a bug, suggest an idea or ask for a game from inside the app (sidebar or tray menu). It fills in a GitHub issue with the details you choose to include - you review it before anything is sent.
 
 ## Install
 
