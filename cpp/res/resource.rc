@@ -1,0 +1,29 @@
+#include "../src/version.h"
+
+1 ICON "ProjectOptM.ico"
+1 24 "app.manifest"
+1 VERSIONINFO
+FILEVERSION OPTM_VERSION_RC
+PRODUCTVERSION OPTM_VERSION_RC
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "exaiver2019"
+      VALUE "FileDescription", "Project OptM"
+      VALUE "FileVersion", OPTM_VERSION
+      VALUE "InternalName", "ProjectOptM"
+      VALUE "LegalCopyright", "exaiver2019"
+      VALUE "OriginalFilename", "ProjectOptM.exe"
+      VALUE "ProductName", "Project OptM"
+      VALUE "ProductVersion", OPTM_VERSION
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

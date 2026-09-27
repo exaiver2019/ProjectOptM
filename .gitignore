@@ -1,0 +1,10 @@
+# build output - releases carry the exe
+cpp/build/
+cpp/dist/
+powershell-1.1/dist/
+*.old
+
+# editors
+.vs/
+.vscode/
+*.user

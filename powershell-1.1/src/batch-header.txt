@@ -1,0 +1,11 @@
+<# : ---------- launcher (batch part) ----------
+@echo off
+set "GO_SELF=%~f0"
+net session >nul 2>&1
+if errorlevel 1 (
+  powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath $env:GO_SELF -Verb RunAs"
+  exit /b
+)
+start "" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Invoke-Expression ([System.IO.File]::ReadAllText($env:GO_SELF))"
+exit /b
+#>
