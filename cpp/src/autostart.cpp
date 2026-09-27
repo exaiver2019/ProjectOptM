@@ -103,7 +103,7 @@ bool Enable(const std::wstring& exe, std::string& error) {
         L"<StartWhenAvailable>false</StartWhenAvailable>"
         L"<RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>"
         L"<IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>"
-        L"<AllowStartOnDemand>true</AllowStartOnDemand>"
+        L"<AllowStartOnDemand>false</AllowStartOnDemand>"   // only at sign-in: no other program can start us as admin through it
         L"<Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle>"
         L"<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"   // runs for as long as you're signed in
         L"<Priority>5</Priority>"                          // normal priority (the default, 7, is below normal)

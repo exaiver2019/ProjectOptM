@@ -123,8 +123,9 @@ again when the app starts. Restarting into a new build doesn't revert them.
 
 Settings > **Start with Windows** creates a Task Scheduler task, "Project OptM (<user>)": at sign-in (10 s
 delay) it runs the exe with `--tray` and *Run with highest privileges*, so the app starts hidden in the tray
-already elevated - no UAC prompt. Normal priority, no time limit, runs on battery. Turning it off deletes
-the task. If the exe moves, the next start points the task at the new path. Test copies (`--data-dir`) never
+already elevated - no UAC prompt. Normal priority, no time limit, runs on battery. The task can't be
+started on demand (`AllowStartOnDemand` is false), so no other program can use it to start the app as admin;
+opening the app by hand always shows the normal UAC prompt. Turning it off deletes the task. If the exe moves, the next start points the task at the new path. Test copies (`--data-dir`) never
 touch the task. A self-restart after an update comes back in the tray if the window was hidden.
 (src/autostart.*)
 
