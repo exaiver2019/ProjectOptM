@@ -1,4 +1,4 @@
-# Project OptM - C++ edition (v2.0)
+# Project OptM - C++ edition (v2.1.1 experimental)
 
 Native rewrite of Project OptM: Win32 + Direct3D 11 + Dear ImGui.
 One self-contained `ProjectOptM.exe` (about 1.2 MB) - no .NET, PowerShell, runtime or PresentMon needed.
@@ -55,7 +55,13 @@ src/tweaks.*          services, power plans, launch priority (IFEO), GPU prefere
 src/tweakset.*        the Tweaks page catalog: every tweak, its details, presets, per-game tweaks
 src/detect.*          finds new games (game libraries, Windows' game list, window size)
 src/checks.*          health checks and their one-click fixes
-src/frames.*          FPS capture (ETW: Microsoft-Windows-DXGI + D3D9 present events) and FPS statistics
+src/frames.*          FPS capture (ETW: Microsoft-Windows-DXGI + D3D9 present events), FPS statistics, stutters
+src/insights.*        game tests (CCD, tweak A/B), session comparison, crash patterns - pure functions over history
+src/crashes.*         crash detection: exit codes + Windows Error Reporting events (Application log 1000/1002)
+src/latency.*         stutter-cause finder: kernel DPC/ISR trace (system logger session), matched against stutters
+src/netping.*         server ping: Kernel-Network ETW finds the game's server, ICMP pings it
+src/driverinfo.*      graphics driver version, shader cache folders/size, AMD Adrenalin settings (read-only)
+src/share.*           game profile share codes (OPTM-GAME1: + base64 JSON)
 src/updater.*         GitHub release check, download, verify, swap
 src/system_info.*     CPU topology, RAM (SMBIOS), GPUs (DXGI), display, Windows version
 src/data.*            profiles.ini, settings.json, history.csv (same formats as 1.1)
@@ -205,6 +211,42 @@ Frame times come from the present events Direct3D 9/10/11/12 raise (the same eve
 so they cover DirectX games. OpenGL and Vulkan games that don't present through DXGI show no FPS - the
 optimizing itself works the same for every game. Capturing needs admin rights, which the app already has.
 
+## 2.1.1 experimental features
+
+- **0.1% lows and stutters.** A stutter is a frame over 2.5x the median of the last 90 frames and at least
+  10 ms more. Home shows the session's 0.1% low and stutter count, the graph marks stutters red, and each
+  session keeps them. The overlay can show Stutters (per minute) and Ping; its graph draws stutters red.
+- **Session details** (`session-details.json`, keyed `"<date>|<game>"`): 0.1% low, stutters, seconds with FPS,
+  how it ended, tweak preset + ids, cores, test variant, GPU temp avg/max, CPU use, ping, stutter cause.
+  `history.csv` is unchanged, so 1.x still reads it. Crashed sessions are kept even when under a minute.
+- **Compare** (history window tab): two ticked sessions (or the last two) side by side, and which tweaks differed.
+- **Tests** (history window tab): `ccd` (V-Cache vs frequency CCD, 2 sessions each, dual-CCD X3D only, not for
+  anti-cheat games) or `ab:<tweak>` (on vs off, 3 each). Stored in settings.json `Experimental.Tests` as
+  `"<id>|<start date>"`; the optimizer's `onPrepare` hook swaps the session's cores / tweak set, the profile isn't
+  touched. A session counts at 5+ minutes with FPS. 1% lows decide, under 3% is "no clear difference". Applying
+  the result is a button.
+- **Crash detection**: exit code >= 0xC0000000 (query-only handle, never for anti-cheat games) or an
+  Application Error (1000) / Application Hang (1002) event naming the exe within the session. The history
+  window shows crash rates per tweak preset once there are 2+ crashes.
+- **Is this a game?** (Settings > Experimental, on by default): an app without a profile that covers its whole
+  monitor in the foreground for 2 minutes is asked about on Home (Yes adds it - anti-cheat folders next to the
+  exe turn on safe mode; No adds it to IgnoredExes; Not now skips it until restart). Browsers, players,
+  launchers and Windows' own apps are never asked about.
+- **Pause cloud sync** tweak (`cloud_sync`, opt-in): closes OneDrive / Dropbox / Google Drive / MEGA at game
+  start; each exe is saved as an `O|<path>` backup, so it's opened again at the end or on the next start after
+  a crash. Test copies only close `OPTM_TEST_CLOUD` stand-ins.
+- **Stutter-cause finder** (Settings > Experimental, off by default): a system-logger kernel session with the
+  DPC + INTERRUPT flags; DPCs/ISRs of 100 us+ are kept for 10 s, and each stutter blames the longest one
+  (0.5 ms+) that overlaps it. Drivers are named with EnumDeviceDrivers. Needs admin.
+- **Server ping** (Settings > Experimental, off by default): Microsoft-Windows-Kernel-Network send events
+  (10/26 TCP, 42/58 UDP) for the game's PIDs pick the address with the most UDP bytes (else non-web TCP);
+  it's pinged every 2 s. Needs admin; some servers don't answer pings.
+- **Graphics driver** card (System): driver version (a change since last start suggests clearing the shader
+  cache), shader cache size, and AMD's global Chill / Anti-Lag / Boost / VSync values from the display class key.
+- **Share codes**: game settings > Copy share code; Games > Add from code shows what a code adds first.
+- **Timeline** (Activity): every session's changes and their undo, crashes, tests, fixes and Windows settings
+  (`timeline.json`, last 400), plus what's still changed on the PC with a button to put it back now.
+
 ## Developer switches
 
 Handy for testing without touching your real setup:
@@ -227,5 +269,12 @@ Handy for testing without touching your real setup:
 | `--feedback` (`--feedback-preview`) | open the feedback form (with its preview) |
 | `OPTM_FEEDBACK_TEST=<title>` | build a feedback link at start and log it instead of opening it (`--feedback-long` tests the clipboard path) |
 | `OPTM_UPDATE_AS=<version>` | pretend to be an older version when checking for updates |
+| `--synthetic-fps` (test copies only) | made-up frames at ~140 FPS with regular 45/90 ms stutters while a game session runs - FPS screens without admin |
+| `--history-tab 0\|1\|2` (with `--history`) | open the history window on Sessions / Compare / Tests |
+| `--share-code <game>` | log that game's share code and its decoded settings (round-trip check) |
+| `--import-code <code>` / `--import-add <code>` (test copies) | open Add from code with a code / add the game at once |
+| `--ask-game <exe path>` (`--ask-answer 1\|0\|-1`, test copies) | show the "Is this a game?" card for an exe (and answer it) |
+| `OPTM_TEST_FOREGROUND=<window class>` + `OPTM_TEST_ASK_SECS=<s>` | test copies: treat that (hidden) window as the foreground app, and ask after that many seconds |
+| `OPTM_TEST_CLOUD=<exe names>` | test copies: the "cloud apps" the Pause cloud sync tweak closes (stand-ins) |
 
 A test copy (`--data-dir`) runs without admin and never asks for it (anything needing admin then fails and is logged).

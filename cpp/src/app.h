@@ -6,10 +6,15 @@
 #include <vector>
 #include <windows.h>
 #include <shellapi.h>
+#include <future>
 #include "checks.h"
+#include "crashes.h"
 #include "data.h"
 #include "detect.h"
+#include "driverinfo.h"
 #include "frames.h"
+#include "latency.h"
+#include "netping.h"
 #include "imgui.h"
 #include "optimizer.h"
 #include "overlay.h"
@@ -113,6 +118,24 @@ private:
     void GameSettingsPopup();
     bool SaveGameSettings();       // false (and says why) if something needs fixing first
     void DeleteGame(const std::string& name);
+
+    // 2.1.1 experimental
+    void PrepareSession(GameProfile& g);           // a running test picks this session's setup
+    void SessionSample();                          // once a second while playing: temps, CPU, stutter causes
+    void GamePromptTick();                         // "Is this a game?" - a full-screen app without a profile
+    void GamePromptCard();
+    void AnswerGamePrompt(int answer);             // 1 = yes, 0 = never, -1 = not now
+    void CompareView(const std::vector<const Session*>& rows);
+    void TestsCard(const std::string& game);
+    void StartTest(const std::string& game, const std::string& test);
+    void ImportPopup();
+    bool ImportGame(GameProfile p);                // adds a game from a decoded share code
+    void DriverCard();
+    void RefreshShaderCache();
+    void ExperimentalCard();
+    void TimelineView();
+    void TimelineFromLog(const std::string& line);
+    void SyntheticFrames();                        // --synthetic-fps (developer check)
     void OpenFeedback();
     void FeedbackPopup();
     std::string FeedbackTitle() const;
@@ -176,6 +199,46 @@ private:
 
     // Sessions page
     char sessionSearch_[64] = {};
+    int cmpA_ = -1, cmpB_ = -1;    // history popup: the two sessions being compared (indexes into data_.history)
+    int historyTab_ = -1;          // --history-tab: open the history popup on this tab
+
+    // 2.1.1 experimental: what the running session records
+    ExitWatch exits_;
+    LatencyTrace latency_;
+    NetPing ping_;
+    std::string sesVariant_, sesPreset_, sesCores_;
+    std::vector<std::string> sesTweaks_;
+    double sesTempSum_ = 0, sesTempMax_ = -1, sesCpuSum_ = 0;
+    int sesTempN_ = 0, sesCpuN_ = 0;
+    uint64_t lastSample_ = 0, sesStartMs_ = 0;
+    size_t logMark_ = SIZE_MAX;    // first log line of the session being started (SIZE_MAX = none)
+    std::string lastCause_;        // stutter-cause finder result of the session that just ended
+    std::vector<LatencyTrace::Driver> causes_;
+
+    // "Is this a game?"
+    std::string askCandidate_;     // exe that's been full screen (lower-case, no .exe)
+    std::wstring askPath_;
+    uint64_t askSince_ = 0;
+    std::string askExe_;           // being asked about now ("" = no question)
+    std::set<std::string> askLater_;
+
+    // System page: graphics driver
+    std::future<driverinfo::CacheSize> cacheJob_;
+    driverinfo::CacheSize cache_;
+    bool cacheKnown_ = false, driverChanged_ = false;
+    std::string driverVersion_;
+    std::vector<driverinfo::Setting> amd_;
+
+    // share codes
+    bool importOpen_ = false;
+    char importBuf_[2048] = {};
+    std::string importError_;
+
+    // Activity page
+    bool showTimeline_ = true;
+    bool synthFps_ = false;        // --synthetic-fps: made-up frames with stutters (screenshots, no admin)
+    uint64_t synthLast_ = 0;
+    double synthPhase_ = 0;
 
     // Tweaks page
     char tweakSearch_[64] = {};

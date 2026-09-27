@@ -153,6 +153,7 @@ std::vector<std::string> Optimizer::Plan(const GameProfile& p) const {
     closeList.insert(closeList.end(), p.close.begin(), p.close.end());
     if (!closeList.empty() && On("close_apps")) l.push_back("Closed at start: " + util::Join(closeList, ", ") + (set.reopenClosed ? " (reopened after)" : ""));
     if (!p.keep.empty()) l.push_back("Never closed for this game: " + util::Join(p.keep, ", "));
+    if (On("cloud_sync")) l.push_back("Cloud sync paused: " + util::Join(CloudApps(), ", ") + " (opened again after)");
     std::vector<std::string> paused;
     for (auto& s : PauseList()) {
         bool wu = s == "UsoSvc" || s == "wuauserv" || s == "DoSvc";
@@ -188,7 +189,12 @@ void Optimizer::Tick(const ProcessList& procs) {
     if (!data_->autoOptimize) return;
     if (!active_) {
         for (auto& p : data_->profiles)
-            if (Running(p, procs)) { Enable(p, procs); break; }
+            if (Running(p, procs)) {
+                GameProfile g = p;
+                if (onPrepare) onPrepare(g);
+                Enable(g, procs);
+                break;
+            }
     } else if (!Running(*active_, procs)) {
         EndSession(true);
     } else {
@@ -211,6 +217,7 @@ void Optimizer::Enable(const GameProfile& p, const ProcessList& procs) {
         closeList.insert(closeList.end(), p.close.begin(), p.close.end());
         CloseApps(closeList, p.keep, procs);
     }
+    if (On("cloud_sync")) PauseCloudSync(procs);
 
     auto bg = BackgroundList();
     if (On("bg_priority")) {
@@ -396,6 +403,30 @@ void Optimizer::CloseApps(const std::vector<std::string>& names, const std::vect
         }
     }
     if (!closed.empty()) log_("  Closed: " + util::Join(closed, ", "));
+}
+
+// Cloud sync apps: closed for the session, and each one's path is saved as a backup ("O|path") so it's
+// opened again when the game closes - or on the next start if we crash
+std::vector<std::string> Optimizer::CloudApps() const {
+    std::wstring test = util::EnvVar(L"OPTM_TEST_CLOUD");   // test copies: stand-ins, never your real OneDrive
+    if (!util::EnvVar(L"OPTM_DATA_DIR").empty()) return test.empty() ? std::vector<std::string>{} : util::NameList(util::Narrow(test));
+    return { "OneDrive", "Dropbox", "GoogleDriveFS", "MEGAsync" };
+}
+
+void Optimizer::PauseCloudSync(const ProcessList& procs) {
+    std::vector<std::string> closed;
+    DWORD self = GetCurrentProcessId();
+    for (auto& n : CloudApps()) {
+        std::set<std::string> seen;   // one backup per exe, however many processes it runs
+        for (DWORD pid : procs.Find(n)) {
+            if (pid == self) continue;
+            std::wstring path = proc::ImagePath(pid);
+            if (path.empty()) continue;
+            if (seen.insert(util::Lower(util::Narrow(path))).second) Backup("O|" + util::Narrow(path));
+            if (proc::Close(pid)) AddUnique(closed, procs.NameOf(pid));
+        }
+    }
+    if (!closed.empty()) log_("  Cloud sync paused: " + util::Join(closed, ", ") + " (opened again after)");
 }
 
 void Optimizer::ReopenClosedApps() {
@@ -630,7 +661,13 @@ void Optimizer::RevertSessionTweaks() {
     if (data_->tweakBackups.empty()) return;
     ProcessList procs;
     for (auto it = data_->tweakBackups.rbegin(); it != data_->tweakBackups.rend(); ++it) {
-        if (it->rfind("R|", 0) == 0) {   // "R|name|priority class": a system process we re-prioritized
+        if (it->rfind("O|", 0) == 0) {   // "O|exe path": an app we closed that must run again (cloud sync)
+            std::wstring path = util::Widen(it->substr(2));
+            bool running = false;
+            if (procs.All().empty()) procs.Refresh();
+            for (DWORD pid : procs.All()) if (_wcsicmp(proc::ImagePath(pid).c_str(), path.c_str()) == 0) { running = true; break; }
+            if (!running && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) util::OpenAsUser(path);
+        } else if (it->rfind("R|", 0) == 0) {   // "R|name|priority class": a system process we re-prioritized
             auto f = util::Split(it->substr(2), '|');
             if (f.size() < 2) continue;
             if (procs.All().empty()) procs.Refresh();

@@ -51,7 +51,10 @@ public:
     void RevertOnExit();                      // launch priority, FSO and GPU preference back to yours
     void ReapplyAtStart();                    // ...and set again when the app starts
 
+    std::vector<std::string> ActiveTweaks() const { return { on_.begin(), on_.end() }; }   // this session's
+
     // Hooks for the app (FPS capture, history)
+    std::function<void(GameProfile&)> onPrepare;   // may change a game's settings for this one session (tests)
     std::function<void(const GameProfile&)> onSessionStart;
     std::function<void(const GameProfile&, double minutes, bool gameClosed)> onSessionEnd;
 
@@ -63,6 +66,8 @@ private:
     int  MoveBackground(const std::vector<std::string>& names, const ProcessList& procs);
     void CloseApps(const std::vector<std::string>& names, const std::vector<std::string>& keep, const ProcessList& procs);
     void ReopenClosedApps();
+    std::vector<std::string> CloudApps() const;
+    void PauseCloudSync(const ProcessList& procs);
     std::vector<std::string> PauseList() const;
     void PauseServices();
     void ResumeServices();

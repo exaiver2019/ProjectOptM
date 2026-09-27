@@ -43,6 +43,18 @@ struct Session {
     std::string date, game;                // date: "yyyy-MM-dd HH:mm"
     double minutes = 0, avgFps = 0, low1 = 0;
     std::string version;                   // app version that recorded it ("imported" / "Optimizer" for imports)
+    // 2.1.1 details (session-details.json, so history.csv stays as the 1.x app reads it)
+    double low01 = 0;                      // 0.1% low FPS
+    int stutters = -1;                     // frames far slower than the ones around them (-1 = not recorded)
+    double fpsSeconds = 0;                 // how much of the session had FPS
+    std::string exit;                      // "" = closed normally / unknown, "crash", "crash 0xC0000005", "hang"
+    std::string preset;                    // tweak preset used ("Safe", "Custom", ...)
+    std::string cores;                     // "Best" / "Other" / "All" / "Prefer" / "safe mode"
+    std::string variant;                   // test build-up: "ccd:vcache", "ab:timer:on", ...
+    double gpuTempAvg = -1, gpuTempMax = -1, cpuAvg = -1, pingAvg = -1;
+    std::string cause;                     // stutter-cause finder: the driver behind most stutters
+    std::vector<std::string> tweaks;       // tweak ids that were on
+    double StuttersPerMin() const { return stutters >= 0 && fpsSeconds >= 30 ? stutters * 60.0 / fpsSeconds : -1; }
 };
 
 struct Theme {
@@ -91,6 +103,13 @@ struct AppData {
     std::string restorePlan;                           // power plan to go back to (crash recovery)
     std::vector<std::string> pausedServices;           // services to restart (crash recovery)
     std::string optimizerImport;                       // newest Optimizer session already imported
+    // 2.1.1 experimental
+    std::map<std::string, std::string> tests;          // game -> running test ("ccd", "ab:<tweak id>")
+    bool latencyOn = false;                            // stutter-cause finder (driver latency trace while playing)
+    bool pingOn = false;                               // measure the game server's ping while playing
+    bool askGames = true;                              // "Is this a game?" for full-screen apps without a profile
+    std::string gpuDriverSeen;                         // graphics driver version at the last start (shader cache hint)
+    std::vector<std::string> timeline;                 // "yyyy-MM-dd HH:mm:ss|kind|text", newest last
 
     // history.csv
     std::vector<Session> history;
@@ -103,6 +122,7 @@ struct AppData {
     void SaveConfig() const;       // settings.json, keeping keys we don't know about
     bool ProfilesChanged() const;  // profiles.ini edited (or deleted) since the last load
     void AddSession(const Session& s, const std::string& version);
+    void AddTimeline(const std::string& kind, const std::string& text);   // kept in timeline.json (last 400)
     int ImportOtherHistory();      // history-import.csv + the "Optimizer" app's log; returns sessions added
     // Adds a [name] block to profiles.ini (name made unique); returns the section name used
     std::string AppendProfile(const std::string& name, const std::string& exe, const std::string& source,
@@ -114,4 +134,5 @@ struct AppData {
     std::wstring ProfilesPath() const;
     std::wstring DataDir() const;
     std::wstring HistoryPath() const;
+    std::wstring DetailsPath() const;   // session-details.json
 };

@@ -2,6 +2,7 @@
 #include "json.h"
 #include "util.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -422,12 +423,51 @@ std::string PriorityLabel(const std::string& p) { return p.empty() ? "Off" : p =
 std::wstring AppData::DataDir() const { return util::AppDataDir(); }
 std::wstring AppData::ProfilesPath() const { return DataDir() + L"\\profiles.ini"; }
 std::wstring AppData::HistoryPath() const { return DataDir() + L"\\history.csv"; }
+std::wstring AppData::DetailsPath() const { return DataDir() + L"\\session-details.json"; }
 
 void AppData::Load() {
     LoadProfiles();
     LoadConfig();
     LoadHistory();
+    std::string text;
+    timeline.clear();
+    if (util::ReadFile(DataDir() + L"\\timeline.json", text)) timeline = Json::Parse(text)["Events"].AsStrings();
 }
+
+void AppData::AddTimeline(const std::string& kind, const std::string& text) {
+    timeline.push_back(util::NowStamp("%Y-%m-%d %H:%M:%S") + "|" + kind + "|" + text);
+    if (timeline.size() > 400) timeline.erase(timeline.begin(), timeline.end() - 400);
+    Json j = Json::Obj();
+    j.obj["Events"] = Json::StrList(timeline);
+    CreateDirectoryW(DataDir().c_str(), nullptr);
+    util::WriteFile(DataDir() + L"\\timeline.json", j.Dump() + "\r\n");
+}
+
+namespace {
+// session-details.json: {"Sessions": {"<date>|<game>": {...}}} - the extra numbers 2.1.1 records
+Json DetailsOf(const Session& s) {
+    Json d = Json::Obj();
+    auto num = [&](const char* k, double v) { if (v >= 0) d.obj[k] = Json::Num(std::round(v * 10) / 10); };
+    num("Low01", s.low01 > 0 ? s.low01 : -1);
+    if (s.stutters >= 0) d.obj["Stutters"] = Json::Num(s.stutters);
+    num("FpsSeconds", s.fpsSeconds > 0 ? s.fpsSeconds : -1);
+    auto str = [&](const char* k, const std::string& v) { if (!v.empty()) d.obj[k] = Json::Str(v); };
+    str("Exit", s.exit); str("Preset", s.preset); str("Cores", s.cores); str("Variant", s.variant); str("Cause", s.cause);
+    num("GpuTempAvg", s.gpuTempAvg); num("GpuTempMax", s.gpuTempMax); num("CpuAvg", s.cpuAvg); num("PingAvg", s.pingAvg);
+    if (!s.tweaks.empty()) d.obj["Tweaks"] = Json::StrList(s.tweaks);
+    return d;
+}
+void ApplyDetails(Session& s, const Json& d) {
+    auto num = [&](const char* k, double def) { return d[k].type == Json::Number ? d[k].num : def; };
+    s.low01 = num("Low01", 0);
+    s.stutters = (int)num("Stutters", -1);
+    s.fpsSeconds = num("FpsSeconds", 0);
+    s.exit = d["Exit"].AsString(); s.preset = d["Preset"].AsString(); s.cores = d["Cores"].AsString();
+    s.variant = d["Variant"].AsString(); s.cause = d["Cause"].AsString();
+    s.gpuTempAvg = num("GpuTempAvg", -1); s.gpuTempMax = num("GpuTempMax", -1); s.cpuAvg = num("CpuAvg", -1); s.pingAvg = num("PingAvg", -1);
+    s.tweaks = d["Tweaks"].AsStrings();
+}
+}  // namespace
 
 bool AppData::LoadProfiles() {
     std::string text;
@@ -500,6 +540,13 @@ void AppData::LoadConfig() {
     restorePlan = j["RestorePlan"].AsString();
     pausedServices = j["PausedSvcs"].AsStrings();
     optimizerImport = j["OptimizerImport"].AsString();
+    const Json& ex = j["Experimental"];
+    tests.clear();
+    for (auto& [g, v] : ex["Tests"].obj) if (v.type == Json::String) tests[g] = v.str;
+    latencyOn = ex["LatencyTrace"].AsBool(false);
+    pingOn = ex["Ping"].AsBool(false);
+    askGames = ex["AskGames"].AsBool(true);
+    gpuDriverSeen = ex["GpuDriverSeen"].AsString();
     const Json& t = j["Theme"];
     theme.accent     = t["Accent"].AsString(theme.accent);
     theme.background = t["Bg"].AsString(theme.background);
@@ -555,6 +602,15 @@ void AppData::SaveConfig() const {
     j.obj["AutoAdded"] = Json::StrList(autoAdded);
     j.obj["PausedSvcs"] = Json::StrList(pausedServices);
     j.obj["OptimizerImport"] = optimizerImport.empty() ? Json() : Json::Str(optimizerImport);
+    Json ex = Json::Obj();
+    Json tj = Json::Obj();
+    for (auto& [g, v] : tests) tj.obj[g] = Json::Str(v);
+    ex.obj["Tests"] = tj;
+    ex.obj["LatencyTrace"] = Json::Boolean(latencyOn);
+    ex.obj["Ping"] = Json::Boolean(pingOn);
+    ex.obj["AskGames"] = Json::Boolean(askGames);
+    ex.obj["GpuDriverSeen"] = gpuDriverSeen.empty() ? Json() : Json::Str(gpuDriverSeen);
+    j.obj["Experimental"] = ex;
     CreateDirectoryW(DataDir().c_str(), nullptr);
     util::WriteFile(path, "\xEF\xBB\xBF" + j.Dump() + "\r\n");   // BOM so Windows PowerShell 5.1 reads it as UTF-8
 }
@@ -584,6 +640,14 @@ void AppData::LoadHistory() {
         history.push_back(s);
         playtime[s.game] += s.minutes;
     }
+    if (util::ReadFile(DetailsPath(), text)) {
+        Json j = Json::Parse(text);
+        const Json& all = j["Sessions"];
+        for (auto& s : history) {
+            auto it = all.obj.find(s.date + "|" + s.game);
+            if (it != all.obj.end()) ApplyDetails(s, it->second);
+        }
+    }
 }
 
 void AppData::AddSession(const Session& s, const std::string& version) {
@@ -595,6 +659,15 @@ void AppData::AddSession(const Session& s, const std::string& version) {
     Session copy = s; copy.version = version;
     history.push_back(copy);
     playtime[s.game] += s.minutes;
+    // the details, keyed by date + game (two sessions of a game in one minute: the later one wins)
+    Json d = DetailsOf(s);
+    if (d.obj.empty()) return;
+    std::string text;
+    Json j = util::ReadFile(DetailsPath(), text) ? Json::Parse(text) : Json::Obj();
+    if (j.type != Json::Object) j = Json::Obj();
+    if (j["Sessions"].type != Json::Object) j.obj["Sessions"] = Json::Obj();
+    j.obj["Sessions"].obj[s.date + "|" + s.game] = d;
+    util::WriteFile(DetailsPath(), j.Dump() + "\r\n");
 }
 
 std::string AppData::AppendProfile(const std::string& baseName, const std::string& exe, const std::string& source,
@@ -612,8 +685,9 @@ std::string AppData::AppendProfile(const std::string& baseName, const std::strin
     };
     for (int i = 2; taken(name); i++) name = clean + " (" + std::to_string(i) + ")";
 
-    std::string block = "\r\n; ---- added automatically when it started (" + source + ", " + util::NowStamp("%Y-%m-%d") +
-                        ") - edit or delete freely\r\n[" + name + "]\r\n";
+    std::string how = source == "a share code" ? "added from a share code (" : source == "you said it's a game" ? "added when you said it's a game ("
+                    : "added automatically when it started (" + source + ", ";
+    std::string block = "\r\n; ---- " + how + util::NowStamp("%Y-%m-%d") + ") - edit or delete freely\r\n[" + name + "]\r\n";
     auto line = [&](const char* k, const std::string& v) { char b[64]; snprintf(b, sizeof(b), "%-17s= ", k); block += b + v + "\r\n"; };
     line("exe", exe);
     if (antiCheat) {

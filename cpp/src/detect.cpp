@@ -313,3 +313,7 @@ std::vector<DetectedGame> GameDetector::Scan(const ProcessList& procs, const App
     for (auto it = pending_.begin(); it != pending_.end();) it = alive.count(it->first) ? std::next(it) : pending_.erase(it);
     return found;
 }
+
+bool GameDetector::AntiCheatNear(const std::wstring& exePath, std::string& which) const {
+    return FindAntiCheat(L"", Parent(exePath), which);
+}

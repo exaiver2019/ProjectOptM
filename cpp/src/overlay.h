@@ -19,6 +19,7 @@ struct OverlayContent {
     std::vector<OverlayStat> stats;     // two per row under the FPS
     bool showGraph = false;
     std::vector<double> graph;          // worst frametime per column, oldest first (ms)
+    std::vector<uint8_t> marks;         // 1 = a stutter in that column (drawn red)
     COLORREF accent = RGB(79, 139, 255);
     int opacity = 85;                   // background, percent (0 = text only)
 };

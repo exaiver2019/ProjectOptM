@@ -155,31 +155,79 @@ void FrameCapture::OnPresent(DWORD pid, uint64_t swapChain, int64_t ts) {
     int n = ++counts_[key];
     if (top_.first == 0 || n > counts_[top_]) top_ = key;
     if (key != top_) return;
-    pending_.push_back(ms);
+    pending_.push_back({ ms, ts });
 }
 
 void FrameCapture::Pump() {
-    std::vector<double> fresh;
+    std::vector<Frame> fresh;
     {
         std::lock_guard<std::mutex> l(mu_);
         fresh.swap(pending_);
     }
     if (fresh.empty()) return;
-    for (double v : fresh) {
+    std::vector<double> sorted;
+    for (const Frame& f : fresh) {
+        double v = f.ms;
         int b = std::min(4000, (int)(v / 0.05));
         hist_[b]++;
         sessionSum_ += v;
         sessionN_++;
+        // stutter: compared with the median of the last 90 frames (needs 30 to judge)
+        bool st = false;
+        if (recent_.size() >= 30) {
+            sorted = recent_;
+            std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+            st = IsStutter(v, sorted[sorted.size() / 2]);
+        }
+        if (st) {
+            stutters_++;
+            spans_.push_back({ f.ts - (int64_t)(v * qpcFreq_ / 1000.0), f.ts });
+            if (spans_.size() > 5000) spans_.erase(spans_.begin());
+        }
+        recent_.push_back(v);
+        if (recent_.size() > 90) recent_.erase(recent_.begin());
+        buffer_.push_back(v);
+        flags_.push_back(st ? 1 : 0);
     }
-    buffer_.insert(buffer_.end(), fresh.begin(), fresh.end());
-    if (buffer_.size() > 8000) buffer_.erase(buffer_.begin(), buffer_.end() - 8000);
+    if (buffer_.size() > 20000) {
+        buffer_.erase(buffer_.begin(), buffer_.end() - 20000);
+        flags_.erase(flags_.begin(), flags_.end() - 20000);
+    }
 }
 
 void FrameCapture::ResetSession() {
     std::fill(hist_.begin(), hist_.end(), 0);
     sessionSum_ = 0;
     sessionN_ = 0;
+    stutters_ = 0;
     buffer_.clear();
+    flags_.clear();
+    recent_.clear();
+    spans_.clear();
+}
+
+std::vector<std::pair<int64_t, int64_t>> FrameCapture::TakeStutterSpans() {
+    std::vector<std::pair<int64_t, int64_t>> out;
+    out.swap(spans_);
+    return out;
+}
+
+void FrameCapture::InjectForTest(double ms) {
+    if (qpcFreq_ <= 1) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); qpcFreq_ = f.QuadPart; }
+    if (!testTs_) { LARGE_INTEGER c; QueryPerformanceCounter(&c); testTs_ = c.QuadPart; }
+    testTs_ += (int64_t)(ms * qpcFreq_ / 1000.0);
+    std::lock_guard<std::mutex> l(mu_);
+    pending_.push_back({ ms, testTs_ });
+}
+
+double FrameCapture::SessionLow01() const {
+    if (sessionN_ < 1000) return 0;   // under 1000 frames the 0.1% is a single frame - too noisy
+    uint64_t need = (uint64_t)std::ceil(sessionN_ * 0.001), acc = 0;
+    for (int b = 4000; b >= 0; b--) {
+        acc += hist_[b];
+        if (acc >= need) return 1000.0 / ((b + 0.5) * 0.05);
+    }
+    return 0;
 }
 
 bool FrameCapture::SessionStats(double& avgFps, double& low1) const {
@@ -224,6 +272,26 @@ std::vector<double> Columns(const std::vector<double>& ft, double windowMs, int 
     }
     for (int i = 1; i < cols; i++) if (c[i] == 0) c[i] = c[i - 1];
     return c;
+}
+
+std::vector<uint8_t> StutterColumns(const std::vector<double>& ft, const std::vector<uint8_t>& flags, double windowMs, int cols) {
+    std::vector<uint8_t> c(cols, 0);
+    if (flags.size() != ft.size()) return c;
+    double t = 0;
+    for (int i = (int)ft.size() - 1; i >= 0; i--) {
+        t += ft[i];
+        if (t > windowMs) break;
+        if (flags[i]) c[std::max(0, cols - 1 - (int)(t / windowMs * cols))] = 1;
+    }
+    return c;
+}
+
+int StuttersIn(const std::vector<double>& ft, const std::vector<uint8_t>& flags, double windowMs) {
+    if (flags.size() != ft.size()) return 0;
+    double t = 0;
+    int n = 0;
+    for (int i = (int)ft.size() - 1; i >= 0 && t < windowMs; i--) { t += ft[i]; n += flags[i]; }
+    return n;
 }
 
 }  // namespace frames

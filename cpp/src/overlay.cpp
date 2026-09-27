@@ -168,14 +168,16 @@ void Overlay::Render(int x, int y) {
                 std::sort(sorted.begin(), sorted.end());
                 double median = sorted[sorted.size() / 2];
                 double top = std::max(sorted.back() * 1.15, median * 2.0);
-                G::SolidBrush good(kGood), spike(kSpike);
+                G::SolidBrush good(kGood), spike(kSpike), stutter(G::Color(255, 240, 80, 80));
                 int n = (int)c_.graph.size();
                 float bw = gw / n;
                 for (int i = 0; i < n; i++) {
                     double v = c_.graph[i];
                     if (v <= 0) continue;
                     float bh = std::max(1.0f, (float)(gh * std::min(1.0, v / top)));
-                    g.FillRectangle(v > median * 1.8 ? &spike : &good, gx + i * bw, gy + gh - bh, std::max(1.0f, bw - 0.5f), bh);
+                    bool st = i < (int)c_.marks.size() && c_.marks[i];   // a real stutter: red, full height
+                    if (st) bh = gh;
+                    g.FillRectangle(st ? &stutter : v > median * 1.8 ? &spike : &good, gx + i * bw, gy + gh - bh, std::max(1.0f, bw - 0.5f), bh);
                 }
             }
             ty = gy + gh;

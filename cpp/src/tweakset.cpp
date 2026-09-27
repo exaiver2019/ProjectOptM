@@ -31,6 +31,7 @@ const std::vector<Tweak>& All() {
         { "services",    "System", "Service suspend",    "Pauses Windows Search, telemetry and your pause_services list", "", 0 },
         { "updates",     "System", "Windows Update pause", "Stops update downloads while you play", "", 0 },
         { "close_apps",  "System", "Close apps",         "Closes the apps on your close list when a game starts", "", 0 },
+        { "cloud_sync",  "System", "Pause cloud sync",   "OneDrive, Dropbox, Google Drive and MEGA stop syncing while you play, and start again after", "Experimental", 3 },
         { "dvr",         "System", "Game DVR capture off", "Turns off background capture hooks (Game Bar itself stays)", "", 1 },
         { "visual",      "System", "Visual effects off", "Turns off window animations while you play", "", 1 },
         { "fso",         "System", "Fullscreen optimizations off", "Per-game exclusive fullscreen behavior", "Next launch", 1 },
@@ -135,6 +136,11 @@ const Details& DetailsOf(const std::string& id) {
             "Closes the apps on your close lists (in profiles.ini) when a game starts, and reopens them afterwards if reopen_closed is on.",
             "Frees memory and CPU from apps you don't need while playing.",
             "Anything unsaved in those apps can be lost. Launchers a game needs are protected by its keep list." } },
+        { "cloud_sync", {
+            "Closes OneDrive, Dropbox, Google Drive and MEGA when a game starts and opens them again when it closes (even after a crash, on the next start). "
+            "Windows Update is already paused by its own tweak, and Steam pauses its downloads by itself while you play.",
+            "Big uploads and downloads can't eat your bandwidth or disk mid-game - fewer lag spikes and loading hitches.",
+            "Files don't sync while you play. They catch up when the game closes. Experimental - it's in no preset." } },
         { "dvr", {
             "Turns off Game DVR background capture (GameDVR_Enabled and AppCaptureEnabled) while you play. Game Bar itself stays installed, so AMD's V-Cache game detection keeps working.",
             "Removes the capture hooks that can cost a few FPS and add frame-time spikes.",

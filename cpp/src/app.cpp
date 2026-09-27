@@ -1,7 +1,9 @@
 #include "app.h"
 #include "autostart.h"
 #include "imgui.h"
+#include "insights.h"
 #include "json.h"
+#include "share.h"
 #include "tweaks.h"
 #include "tweakset.h"
 #include "util.h"
@@ -107,6 +109,7 @@ void App::Init(HWND hwnd, float dpiScale) {
     ApplyTheme();
 
     opt_.Init(&sys_, &data_, [this](const std::string& l) { Log(l); });
+    opt_.onPrepare = [this](GameProfile& g) { PrepareSession(g); };
     opt_.onSessionStart = [this](const GameProfile& p) { SessionStarted(p); };
     opt_.onSessionEnd = [this](const GameProfile& p, double m, bool closed) { SessionEnded(p, m, closed); };
 
@@ -172,6 +175,27 @@ void App::Init(HWND hwnd, float dpiScale) {
             if (wcscmp(argv[i], L"--expand") == 0) expanded_.insert(util::Narrow(argv[i + 1]));   // open a tweak's details
             if (wcscmp(argv[i], L"--search") == 0) snprintf(gameSearch_, sizeof(gameSearch_), "%s", util::Narrow(argv[i + 1]).c_str());
             if (wcscmp(argv[i], L"--tour") == 0) TourGo(_wtoi(argv[i + 1]));   // open the tour at a step (screenshots)
+            if (wcscmp(argv[i], L"--history-tab") == 0) historyTab_ = _wtoi(argv[i + 1]);   // 0 sessions, 1 compare, 2 tests
+            if (wcscmp(argv[i], L"--import-code") == 0) { importOpen_ = true; snprintf(importBuf_, sizeof(importBuf_), "%s", util::Narrow(argv[i + 1]).c_str()); }
+            if (wcscmp(argv[i], L"--import-add") == 0 && !util::EnvVar(L"OPTM_DATA_DIR").empty()) {   // add a game from a code (test copies)
+                GameProfile p; std::string err;
+                if (share::Decode(util::Narrow(argv[i + 1]), p, err)) ImportGame(p); else Log("import failed: " + err);
+            }
+            if (wcscmp(argv[i], L"--ask-answer") == 0 && !util::EnvVar(L"OPTM_DATA_DIR").empty()) AnswerGamePrompt(_wtoi(argv[i + 1]));
+            if (wcscmp(argv[i], L"--share-code") == 0)   // log a game's share code (round-trip check)
+                for (auto& p : data_.profiles)
+                    if (p.name == util::Narrow(argv[i + 1])) {
+                        std::string code = share::Encode(p), err;
+                        GameProfile back;
+                        bool ok = share::Decode(code, back, err);
+                        Log("share code: " + code);
+                        Log(std::string("share decode: ") + (ok ? "ok " + back.name + " exe=" + util::Join(back.exes, ",") + " cores=" + back.cores +
+                            " prio=" + back.priority + " tweaks=" + back.tweaks + " ids=" + util::Join(back.tweakIds, ",") + " close=" + util::Join(back.close, ",") : "FAILED " + err));
+                    }
+            if (wcscmp(argv[i], L"--ask-game") == 0 && !util::EnvVar(L"OPTM_DATA_DIR").empty()) {   // show the question for an exe (screenshots)
+                askPath_ = argv[i + 1];
+                askExe_ = util::StripExe(util::Narrow(askPath_.substr(askPath_.find_last_of(L"\\/") + 1)));
+            }
         }
         LocalFree(argv);
     }
@@ -227,6 +251,23 @@ void App::Init(HWND hwnd, float dpiScale) {
     }
     // first start of this version: show the welcome tour (after the intro; not in screenshot test runs)
     if (!data_.tourDone && tourStep_ < 0 && !testShot) StartTour();
+
+    // graphics driver: a new version since last time makes the shader cache worth clearing
+    if (!sys_.gpus.empty()) {
+        driverVersion_ = driverinfo::Version(sys_.gpus[0].name);
+        if (!driverVersion_.empty()) {
+            if (data_.gpuDriverSeen.empty()) { data_.gpuDriverSeen = driverVersion_; data_.SaveConfig(); }
+            else if (data_.gpuDriverSeen != driverVersion_) {
+                driverChanged_ = true;
+                Log("Graphics driver updated (" + data_.gpuDriverSeen + " -> " + driverVersion_ + ") - clearing the shader cache on the System page can fix stutter after an update");
+            }
+        }
+    }
+    amd_ = driverinfo::AmdSettings(sys_);
+    RefreshShaderCache();
+
+    // developer check (test copies only): made-up frames with stutters, so FPS screens can be checked without admin
+    synthFps_ = cmd.find("--synthetic-fps") != std::string::npos && !util::EnvVar(L"OPTM_DATA_DIR").empty();
 
     // developer check: --fps-self graphs this window's own frames
     if (cmd.find("--fps-self") != std::string::npos) {
@@ -375,7 +416,11 @@ void App::Log(const std::string& line) {
     log_.push_back("[" + util::NowStamp("%H:%M:%S") + "] " + line);
     static std::wstring logFile = util::EnvVar(L"OPTM_LOG_FILE");   // testing: mirror the log to a file
     if (!logFile.empty()) util::AppendFile(logFile, log_.back() + "\r\n");
-    if (log_.size() > 2000) log_.erase(log_.begin(), log_.begin() + 500);
+    if (log_.size() > 2000) {
+        log_.erase(log_.begin(), log_.begin() + 500);
+        logMark_ = logMark_ >= 500 && logMark_ != SIZE_MAX ? logMark_ - 500 : logMark_;
+    }
+    TimelineFromLog(line);
 }
 
 bool App::Busy() const { return selfTest_ || animating_ || ImGui::IsAnyItemActive() || introPending_ || introStart_; }
@@ -389,9 +434,12 @@ void App::Update() {
         DestroyWindow(hwnd_);   // main.cpp restarts us after everything is restored
         return;
     }
+    SyntheticFrames();
     frames_.Pump();
     UpdateOverlay();
     uint64_t now = Ms();
+    if (opt_.Active() && now - lastSample_ >= 1000) { lastSample_ = now; SessionSample(); }
+    if (cacheJob_.valid() && cacheJob_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) { cache_ = cacheJob_.get(); cacheKnown_ = true; }
     // A new build was put in place of our exe (Build.bat): restart into it once no game is running
     if (now - lastSelfCheck_ >= 5000) {
         lastSelfCheck_ = now;
@@ -422,12 +470,18 @@ void App::Tick() {
     std::set<std::string> now;
     for (auto& p : data_.profiles) if (opt_.Running(p, procs_)) now.insert(p.name);
     runningGames_ = now;
+    logMark_ = log_.size();   // a session starting in this tick logs its changes from here (timeline)
     opt_.Tick(procs_);
+    logMark_ = SIZE_MAX;
     if (const GameProfile* a = opt_.Active()) {
         std::vector<DWORD> pids;
         for (auto& e : a->exes) for (DWORD pid : procs_.Find(e)) pids.push_back(pid);
+        if (!a->antiCheat) for (DWORD pid : pids) exits_.Track(pid);   // exit code (crash detection)
         if (selfTest_) pids.push_back(GetCurrentProcessId());
         if (frames_.Running()) frames_.SetPids(pids);
+        if (ping_.Running()) ping_.SetPids(pids);
+    } else {
+        GamePromptTick();
     }
     UpdateTray();
 }
@@ -478,19 +532,62 @@ void App::RefreshChecks() {
 
 void App::SessionStarted(const GameProfile& p) {
     lastCompare_.clear();
+    bool fresh = logMark_ != SIZE_MAX;   // a new session (not the FPS graph being switched back on)
+    if (fresh && !sesVariant_.empty()) {
+        auto t = data_.tests.find(p.name);
+        if (t != data_.tests.end()) {
+            insights::Test test = insights::Describe(t->second);
+            int done = insights::Of(data_.history, p.name, test.a, test.since).n + insights::Of(data_.history, p.name, test.b, test.since).n;
+            Log("  Test session " + std::to_string(done + 1) + " of " + std::to_string(test.need * 2) + ": " + (sesVariant_ == test.a ? test.aName : test.bName));
+        }
+    }
+    if (fresh) {
+        std::vector<std::string> changes;
+        for (size_t i = logMark_; i < log_.size(); i++) {
+            size_t at = log_[i].find("]   ");   // the indented lines under ">> game detected" are what was changed
+            if (at != std::string::npos) changes.push_back(util::Trim(log_[i].substr(at + 1)));
+        }
+        data_.AddTimeline("start", p.name + (sesVariant_.empty() ? "" : " (test: " + sesVariant_ + ")") + "\n" + util::Join(changes, "\n"));
+        sesPreset_ = tweakset::PresetFor(data_, &p);
+        sesCores_ = p.antiCheat ? "safe mode" : opt_.CoreMode(p) == "Best" && (p.softPin || opt_.On("soft_pin")) ? "Prefer" : opt_.CoreMode(p);
+        sesTweaks_ = opt_.ActiveTweaks();
+        sesTempSum_ = sesCpuSum_ = 0; sesTempMax_ = -1; sesTempN_ = sesCpuN_ = 0;
+        sesStartMs_ = Ms();
+        causes_.clear();
+        exits_.Clear();
+    }
     SYSTEM_POWER_STATUS ps;
-    if (sys_.hasBattery && GetSystemPowerStatus(&ps) && ps.ACLineStatus == 0) {
+    if (fresh && sys_.hasBattery && GetSystemPowerStatus(&ps) && ps.ACLineStatus == 0) {
         Log("  ! Running on battery - plug in the charger for full performance");
         Balloon((p.name + " is running on battery. Plug in the charger for full performance.").c_str(), NIIF_WARNING);
     }
     frames_.ResetSession();
-    if (!data_.fpsOn) return;
     std::vector<DWORD> pids;
     for (auto& e : p.exes) for (DWORD pid : procs_.Find(e)) pids.push_back(pid);
+    if (fresh && data_.pingOn) {
+        if (ping_.Start(pids)) Log("  Server ping: watching the game's network traffic");
+        else Log("  Server ping unavailable: " + ping_.LastError());
+    }
+    if (!data_.fpsOn) return;
     if (selfTest_) pids.push_back(GetCurrentProcessId());
+    if (synthFps_) { Log("  FPS: made-up test frames (--synthetic-fps)"); return; }
     if (frames_.Start(pids)) Log("  FPS capture started");
     else if (frames_.Blocked()) Log("  No FPS for " + p.name + ": Windows refused frame capture (usually the game's anti-cheat) - optimizing still works");
     else Log("  FPS capture couldn't start: " + frames_.LastError());
+    if (data_.latencyOn && frames_.Running() && !latency_.Running()) {
+        if (latency_.Start()) Log("  Stutter-cause finder on: timing driver delays while you play");
+        else Log("  Stutter-cause finder couldn't start: " + latency_.LastError());
+    }
+}
+
+// Once a second while a game runs: temperatures and CPU for the session, and stutters for the cause finder
+void App::SessionSample() {
+    sensors_.SetActive(true);
+    Readings r = sensors_.Get();
+    if (r.gpuTempC >= 0) { sesTempSum_ += r.gpuTempC; sesTempN_++; sesTempMax_ = std::max(sesTempMax_, r.gpuTempC); }
+    if (r.cpuPct >= 0) { sesCpuSum_ += r.cpuPct; sesCpuN_++; }
+    auto spans = frames_.TakeStutterSpans();
+    if (latency_.Running() && !spans.empty()) latency_.AddStutters(spans);
 }
 
 void App::SessionEnded(const GameProfile& p, double minutes, bool gameClosed) {
@@ -499,9 +596,36 @@ void App::SessionEnded(const GameProfile& p, double minutes, bool gameClosed) {
     bool hasFps = frames_.SessionStats(avg, low);
     std::string extra;
     if (hasFps) extra += ", avg " + std::to_string((int)std::lround(avg)) + " FPS, 1% low " + std::to_string((int)std::lround(low));
+    int stutters = hasFps ? frames_.SessionStutters() : -1;
+    if (hasFps) extra += ", " + Plural(stutters, "stutter");
+    // what else the session saw
+    std::string exitInfo = gameClosed ? exits_.Result(p.exes, (uint64_t)(minutes * 60000)) : "";
+    exits_.Clear();
+    double pingAvg = ping_.SessionAvg();
+    ping_.Stop();
+    lastCause_.clear();
+    if (latency_.Running()) {
+        auto spans = frames_.TakeStutterSpans();
+        if (!spans.empty()) latency_.AddStutters(spans);
+        Sleep(1200);   // the trace delivers its last second of events
+        causes_ = latency_.Report();
+        latency_.Stop();
+        if (!causes_.empty() && causes_[0].stutters > 0) {
+            lastCause_ = causes_[0].name;
+            Log("  Stutter causes: " + causes_[0].name + " was busy during " + Plural(causes_[0].stutters, "stutter") +
+                " (of " + std::to_string(latency_.StuttersSeen()) + ") - longest delay " + std::to_string((int)causes_[0].maxUs) + " us");
+        } else if (latency_.StuttersSeen() > 0) Log("  Stutter causes: no driver delay lined up with the stutters - likely the game itself (loading, shader compiles)");
+    }
+    sensors_.SetActive(false);
+    if (!exitInfo.empty()) {
+        Log("  ! " + p.name + (exitInfo == "hang" ? " stopped responding and was closed" : " crashed") +
+            (exitInfo.size() > 6 ? " (" + exitInfo.substr(6) + ")" : "") + " - tweaks in use: " + sesPreset_);
+        Balloon((p.name + (exitInfo == "hang" ? " stopped responding." : " crashed.") + " It's noted in its history with the tweaks that were on.").c_str(), NIIF_WARNING);
+        data_.AddTimeline("crash", p.name + " " + exitInfo + " (tweaks: " + sesPreset_ + ")");
+    }
     lastCompare_.clear();
-    if (minutes >= 1) {
-        double mins = std::round(minutes * 10) / 10;
+    if (minutes >= 1 || !exitInfo.empty()) {   // a crash right at launch is worth keeping too
+        double mins = std::max(0.1, std::round(minutes * 10) / 10);
         if (hasFps && mins >= 2) {
             for (auto it = data_.history.rbegin(); it != data_.history.rend(); ++it)
                 if (it->game == p.name && it->avgFps > 0 && it->minutes >= 2) {
@@ -514,11 +638,77 @@ void App::SessionEnded(const GameProfile& p, double minutes, bool gameClosed) {
         s.date = util::NowStamp("%Y-%m-%d %H:%M");
         s.game = p.name;
         s.minutes = mins;
-        if (hasFps) { s.avgFps = std::round(avg * 10) / 10; s.low1 = std::round(low * 10) / 10; }
+        if (hasFps) {
+            s.avgFps = std::round(avg * 10) / 10; s.low1 = std::round(low * 10) / 10;
+            s.low01 = std::round(frames_.SessionLow01() * 10) / 10;
+            s.stutters = stutters;
+            s.fpsSeconds = std::round(frames_.SessionSeconds());
+        }
+        s.exit = exitInfo;
+        s.preset = sesPreset_;
+        s.cores = sesCores_;
+        s.variant = sesVariant_;
+        s.tweaks = sesTweaks_;
+        if (sesTempN_) { s.gpuTempAvg = sesTempSum_ / sesTempN_; s.gpuTempMax = sesTempMax_; }
+        if (sesCpuN_) s.cpuAvg = sesCpuSum_ / sesCpuN_;
+        s.pingAvg = pingAvg;
+        s.cause = lastCause_;
         data_.AddSession(s, OPTM_VERSION);
     }
     if (opt_.SessionCleanups() > 0) extra += ", RAM cleared " + std::to_string(opt_.SessionCleanups()) + "x";
     Log("<< " + p.name + (gameClosed ? " closed after " : " session ended after ") + util::FormatDuration(minutes) + extra + " - everything restored");
+    data_.AddTimeline("end", p.name + " - " + (gameClosed ? "closed" : "session ended") + " after " + util::FormatDuration(minutes) + ", everything put back");
+    // a running test: say how far it is, and when it's done
+    auto t = data_.tests.find(p.name);
+    if (t != data_.tests.end() && !sesVariant_.empty()) {
+        insights::Test test = insights::Describe(t->second);
+        if (insights::Finished(test, data_.history, p.name)) {
+            std::string winner;
+            std::string v = insights::Verdict(test, insights::Of(data_.history, p.name, test.a, test.since), insights::Of(data_.history, p.name, test.b, test.since), winner);
+            Log(">> Test finished for " + p.name + ": " + v);
+            Balloon(("Test finished for " + p.name + ". See its history for the result.").c_str());
+            data_.AddTimeline("test", p.name + ": " + v);
+        } else if (!insights::Counts(data_.history.empty() ? Session() : data_.history.back()))
+            Log("  Test: this session was too short to count (it needs 5+ minutes with FPS)");
+    }
+    sesVariant_.clear();
+}
+
+// A running test decides this session's setup (the profile itself isn't changed)
+void App::PrepareSession(GameProfile& g) {
+    sesVariant_.clear();
+    auto t = data_.tests.find(g.name);
+    if (t == data_.tests.end()) return;
+    insights::Test test = insights::Describe(t->second);
+    std::string v = insights::Next(test, data_.history, g.name);
+    if (v.empty()) return;   // finished - the result waits in its history
+    if (test.id == "ccd" && (g.antiCheat || sys_.layout != CpuLayout::DualX3D)) return;
+    auto ids = tweakset::ChosenFor(data_, &g);
+    if (test.id == "ccd") {
+        ids.insert("pinning");                      // the test needs pinning on, whatever the preset says
+        g.cores = v == "ccd:freq" ? "Other" : "Best";
+        g.softPin = false;
+        ids.erase("soft_pin");
+        if (v == "ccd:freq") ids.erase("bg_affinity");   // background apps would land on the game's cores
+    } else {
+        std::string id = test.id.substr(3);
+        if (v == test.a) ids.insert(id); else ids.erase(id);
+    }
+    g.tweaks = "Custom";
+    g.tweakIds.assign(ids.begin(), ids.end());
+    sesVariant_ = v;   // logged when the session starts
+}
+
+void App::StartTest(const std::string& game, const std::string& test) {
+    if (test.empty()) { data_.tests.erase(game); Log("Test stopped for " + game); }
+    else {
+        data_.tests[game] = test + "|" + util::NowStamp("%Y-%m-%d %H:%M");
+        insights::Test t = insights::Describe(test);
+        Log("Test started for " + game + ": " + t.aName + " vs " + t.bName + " over the next " + std::to_string(t.need * 2) +
+            " sessions (5+ minutes each). The game's own settings aren't changed.");
+        data_.AddTimeline("test", game + ": started " + t.aName + " vs " + t.bName);
+    }
+    data_.SaveConfig();
 }
 
 void App::Shutdown() {
@@ -527,8 +717,10 @@ void App::Shutdown() {
     if (hotkey_) UnregisterHotKey(hwnd_, kHotkeyPanic);
     if (overlayHotkey_) UnregisterHotKey(hwnd_, kHotkeyOverlay);
     overlay_.Destroy();
-    sensors_.Stop();
     opt_.EndSession();
+    sensors_.Stop();
+    latency_.Stop();
+    ping_.Stop();
     // fully closing (not restarting into a new build): the per-game Windows settings go back too
     if (data_.revertOnExit && !restart_) opt_.RevertOnExit();
     frames_.Stop();
@@ -632,6 +824,7 @@ namespace {
 const std::pair<const char*, const char*> kOverlayItems[] = {
     { "low", "1% low" }, { "frametime", "Frametime" }, { "graph", "Frametime graph" },
     { "gpu", "GPU usage" }, { "gputemp", "GPU temp" }, { "vram", "VRAM" }, { "cpu", "CPU usage" }, { "ram", "RAM" },
+    { "stutter", "Stutters" }, { "ping", "Ping" },
 };
 std::wstring Num(double v, const wchar_t* fmt) { wchar_t b[48]; swprintf(b, 48, fmt, v); return b; }
 }
@@ -689,8 +882,16 @@ OverlayContent App::OverlayNow() {
     if (has("vram")) c.stats.push_back({ L"VRAM", rd.vramUsedGB >= 0 ? Num(rd.vramUsedGB, L"%.1f") + Num(rd.vramTotalGB, L"/%.0f GB") : none });
     if (has("cpu")) c.stats.push_back({ L"CPU", rd.cpuPct >= 0 ? Num(rd.cpuPct, L"%.0f%%") : none });
     if (has("ram")) c.stats.push_back({ L"RAM", rd.ramUsedGB >= 0 ? Num(rd.ramUsedGB, L"%.1f") + Num(rd.ramTotalGB, L"/%.0f GB") : none });
+    if (has("stutter")) c.stats.push_back({ L"Stutters", c.hasFps ? Num(frames::StuttersIn(buf, frames_.Stutters(), 60000), L"%.0f / min") : none });
+    if (has("ping")) {
+        double ms = ping_.PingMs();
+        c.stats.push_back({ L"Ping", ms >= 0 ? Num(ms, L"%.0f ms") : none });
+    }
     c.showGraph = has("graph");
-    if (c.showGraph) c.graph = frames::Columns(buf, 4000, 64);
+    if (c.showGraph) {
+        c.graph = frames::Columns(buf, 4000, 64);
+        c.marks = frames::StutterColumns(buf, frames_.Stutters(), 4000, 64);
+    }
     c.accent = RGB((int)(g_accent.x * 255), (int)(g_accent.y * 255), (int)(g_accent.z * 255));
     c.opacity = data_.overlayOpacity;
     return c;
@@ -770,11 +971,7 @@ void App::ClearShaderCache() {
     std::string q = "Clear the DirectX" + (makers.empty() ? std::string() : " and " + util::Join(makers, " / ")) +
                     " shader caches?\n\nThis fixes stutter or crashes after a driver update. The first launch of each game afterwards may stutter for a minute while shaders rebuild.";
     if (Msg(hwnd_, q, "Project OptM", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
-    std::wstring local = util::LocalAppDataRoot(), user = util::EnvVar(L"USERPROFILE"), pd = util::EnvVar(L"ProgramData");
-    std::vector<std::wstring> dirs = { local + L"\\D3DSCache" };
-    if (util::Contains(makers, "AMD"))    for (auto d : { L"\\AMD\\DxCache", L"\\AMD\\DxcCache", L"\\AMD\\VkCache", L"\\AMD\\GLCache" }) dirs.push_back(local + d);
-    if (util::Contains(makers, "NVIDIA")) { dirs.push_back(local + L"\\NVIDIA\\DXCache"); dirs.push_back(local + L"\\NVIDIA\\GLCache"); dirs.push_back(pd + L"\\NVIDIA Corporation\\NV_Cache"); }
-    if (util::Contains(makers, "Intel"))  { dirs.push_back(local + L"\\Intel\\ShaderCache"); dirs.push_back(user + L"\\AppData\\LocalLow\\Intel\\ShaderCache"); }
+    std::vector<std::wstring> dirs = driverinfo::ShaderCacheDirs(sys_);
     SetCursor(LoadCursorW(nullptr, IDC_WAIT));
     uint64_t freed = 0; int files = 0, skipped = 0;
     namespace fs = std::filesystem;
@@ -793,6 +990,9 @@ void App::ClearShaderCache() {
     std::string msg = "Shader cache cleared: " + std::to_string(files) + " files, " + std::to_string(freed / (1024 * 1024)) + " MB freed";
     if (skipped) msg += " (" + std::to_string(skipped) + " in use, skipped)";
     Log(msg);
+    if (driverChanged_) { driverChanged_ = false; data_.gpuDriverSeen = driverVersion_; data_.SaveConfig(); }
+    cacheKnown_ = false;
+    RefreshShaderCache();
 }
 
 void App::OpenProfiles() {
@@ -1026,6 +1226,7 @@ void App::Render() {
     GameSettingsPopup();
     HowItWorksPopup();
     FeedbackPopup();
+    ImportPopup();
     ImGui::End();
     if (!introPending_ && !introStart_) TourOverlay();   // the tour waits for the intro
     IntroOverlay();
@@ -1452,6 +1653,33 @@ void App::PerfCard() {
     if (live && st.low1 > 0) ImGui::TextColored(kSub, "1%% low      %d", (int)std::lround(st.low1)); else ImGui::TextColored(kSub, "1%% low      --");
     if (live) ImGui::TextColored(kSub, "Frametime   %.1f ms", st.frametime); else ImGui::TextColored(kSub, "Frametime   --");
     ImGui::EndGroup();
+    // this session so far: 0.1% low, stutters, ping
+    ImGui::SameLine(0, 28 * s_);
+    ImGui::BeginGroup();
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    double l01 = frames_.SessionLow01();
+    if (live && l01 > 0) ImGui::TextColored(kSub, "0.1%% low    %d", (int)std::lround(l01)); else ImGui::TextColored(kSub, "0.1%% low    --");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The slowest 0.1%% of frames this session, as FPS - the big hitches you feel.\nNeeds about 1000 frames first.");
+    int stNow = frames::StuttersIn(buf, frames_.Stutters(), 60000);
+    if (live) ImGui::TextColored(stNow ? kAmber : kSub, "Stutters    %d this session, %d last min", frames_.SessionStutters(), stNow);
+    else ImGui::TextColored(kSub, "Stutters    --");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("A stutter is a frame that took much longer than the ones around it\n(over 2.5x the usual frametime, and at least 10 ms more). Marked red in the graph.");
+    ImGui::EndGroup();
+    if (ping_.Running() || ping_.PingMs() >= 0) {
+        ImGui::SameLine(0, 28 * s_);
+        ImGui::BeginGroup();
+        ImGui::Dummy(ImVec2(0, 4 * s_));
+        double pm = ping_.PingMs();
+        if (pm >= 0) ImGui::TextColored(kSub, "Ping        %d ms", (int)std::lround(pm));
+        else ImGui::TextColored(kSub, "Ping        %s", ping_.NoReply() ? "no reply" : "--");
+        std::string srv = ping_.Server();
+        ImGui::TextColored(kDim, "%s", srv.empty() ? "finding the server..." : srv.c_str());
+        ImGui::EndGroup();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("The game server's ping: the address the game sends most of its traffic to, pinged every 2 seconds.\n"
+                              "\"no reply\" = that server doesn't answer pings (many don't).");
+    }
     const char* tl = data_.fpsOn ? "Graph: ON" : "Graph: OFF";
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(tl).x - ImGui::GetStyle().FramePadding.x * 2);
     ImGui::SetCursorPosY(top);
@@ -1519,11 +1747,26 @@ void App::PerfCard() {
             dl->AddQuadFilled(pts[i - 1], pts[i], ImVec2(pts[i].x, bottom), ImVec2(pts[i - 1].x, bottom), soft);
         dl->AddPolyline(pts.data(), (int)pts.size(), U32(g_accent), 0, 1.6f * s_);
     }
+    // stutters: a red tick along the top of the graph where each one happened
+    auto marks = frames::StutterColumns(buf, frames_.Stutters(), 8000, cols);
+    ImU32 red = U32(Hex("#F0605D"));
+    for (int i = 0; i < cols; i++)
+        if (marks[i]) dl->AddRectFilled(ImVec2(p.x + i * step - 1.5f * s_, p.y + 2 * s_), ImVec2(p.x + i * step + 1.5f * s_, p.y + h - 2 * s_), U32(Hex("#F0605D", 0.35f)));
+    for (int i = 0; i < cols; i++) if (marks[i]) dl->AddCircleFilled(ImVec2(p.x + i * step, p.y + 6 * s_), 3 * s_, red, 10);
+    // a running test says which setup this session uses
+    if (opt_.Active() && !sesVariant_.empty()) {
+        auto t = data_.tests.find(opt_.Active()->name);
+        if (t != data_.tests.end()) {
+            insights::Test test = insights::Describe(t->second);
+            ImGui::TextColored(kAmber, "Test session: %s", (sesVariant_ == test.a ? test.aName : test.bName).c_str());
+        }
+    }
     EndCard();
 }
 
 void App::PageHome() {
     // just what's happening now - sessions, overlay and hardware each have their own page
+    GamePromptCard();
     PerfCard();
     Mark("perf");
 }
@@ -1565,8 +1808,21 @@ void App::PageSessions() {
                     if (ses.minutes >= 2) sub += "  (" + Signed(ses.avgFps - data_.history[j].avgFps) + ")";
                     break;
                 }
+            if (ses.low01 > 0) { char t[32]; snprintf(t, sizeof(t), ", 0.1%% %.0f", ses.low01); sub += t; }
+            double spm = ses.StuttersPerMin();
+            if (spm >= 0) { char t[40]; snprintf(t, sizeof(t), ", %.1f stutters/min", spm); sub += t; }
         }
         ImGui::TextColored(kDim, "%s", sub.c_str());
+        // tags: crashed, test session
+        if (!ses.exit.empty() || !ses.variant.empty()) {
+            ImGui::SameLine(0, 10 * s_);
+            if (!ses.exit.empty()) ImGui::TextColored(Hex("#F0605D"), "%s", ses.exit == "hang" ? "NOT RESPONDING" : "CRASHED");
+            if (!ses.exit.empty() && !ses.variant.empty()) ImGui::SameLine(0, 8 * s_);
+            if (!ses.variant.empty()) {
+                insights::Test test = insights::Describe(ses.variant.substr(0, ses.variant.rfind(':')));
+                ImGui::TextColored(kAmber, "TEST: %s", (ses.variant == test.a ? test.aName : ses.variant == test.b ? test.bName : ses.variant).c_str());
+            }
+        }
         ImGui::EndGroup();
         float rowBottom = ImGui::GetItemRectMax().y;   // the two-line name + date block
         std::string dur = util::FormatDuration(ses.minutes);
@@ -1642,7 +1898,7 @@ void App::PageGames() {
     // header: count, search, Edit profiles
     ImVec2 gamesTop = ImGui::GetCursorScreenPos();
     float searchW = 300 * s_;
-    float editW = ImGui::CalcTextSize("Edit profiles").x + ImGui::GetStyle().FramePadding.x * 2;
+    float editW = ImGui::CalcTextSize("Edit profiles").x + ImGui::CalcTextSize("Add from code").x + ImGui::GetStyle().FramePadding.x * 4 + 8 * s_;
     ImGui::AlignTextToFramePadding();
     if (query.empty()) ImGui::TextColored(kSub, "%zu games, A to Z. Launch from here or anywhere else - each game is optimized automatically.", data_.profiles.size());
     else ImGui::TextColored(kSub, "%zu of %zu games match \"%s\"", shown.size(), data_.profiles.size(), util::Trim(gameSearch_).c_str());
@@ -1651,6 +1907,9 @@ void App::PageGames() {
     if (focusGameSearch_) { ImGui::SetKeyboardFocusHere(); focusGameSearch_ = false; }
     ImGui::InputTextWithHint("##gamesearch", "Search games  (Ctrl+F)", gameSearch_, sizeof(gameSearch_));
     if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape)) gameSearch_[0] = 0;
+    ImGui::SameLine(0, 8 * s_);
+    if (ImGui::Button("Add from code")) importOpen_ = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a game with the settings a friend shared (a share code)");
     ImGui::SameLine(0, 8 * s_);
     if (ImGui::Button("Edit profiles")) OpenProfiles();
     ImGui::Dummy(ImVec2(0, 4 * s_));
@@ -1755,7 +2014,7 @@ void App::PageGames() {
 
 // Per-game history: every session, FPS trend and how the last one compares
 void App::HistoryPopup() {
-    if (!historyGame_.empty() && !ImGui::IsPopupOpen("history")) ImGui::OpenPopup("history");
+    if (!historyGame_.empty() && !ImGui::IsPopupOpen("history")) { ImGui::OpenPopup("history"); cmpA_ = cmpB_ = -1; }
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowSize(ImVec2(std::min(760 * s_, io.DisplaySize.x - 60 * s_), std::min(560 * s_, io.DisplaySize.y - 60 * s_)));
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -1780,7 +2039,31 @@ void App::HistoryPopup() {
     std::string head = Plural(rows.size(), "session") + "   |   " + util::FormatHours(total) + " played";
     if (best > 0) head += "   |   best average " + std::to_string((int)std::lround(best)) + " FPS";
     ImGui::TextColored(kSub, "%s", head.c_str());
-    ImGui::Dummy(ImVec2(0, 6 * s_));
+    std::string crashes = insights::CrashPattern(data_.history, historyGame_);
+    if (!crashes.empty()) ImGui::TextColored(Hex("#F0605D"), "%s", crashes.c_str());
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+
+    int tab = 0;
+    if (ImGui::BeginTabBar("histtabs")) {
+        std::string tabCompare = std::string(cmpA_ >= 0 && cmpB_ >= 0 ? "Compare (2 picked)" : "Compare") + "###cmp";
+        auto ti = data_.tests.find(historyGame_);
+        bool testDone = ti != data_.tests.end() && insights::Finished(insights::Describe(ti->second), data_.history, historyGame_);
+        std::string tabTests = std::string(ti == data_.tests.end() ? "Tests" : testDone ? "Tests (result)" : "Tests (running)") + "###tests";
+        auto sel = [&](int i) { return historyTab_ == i ? ImGuiTabItemFlags_SetSelected : 0; };   // --history-tab (screenshots)
+        if (ImGui::BeginTabItem("Sessions###ses", nullptr, sel(0))) { tab = 0; ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem(tabCompare.c_str(), nullptr, sel(1))) { tab = 1; ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem(tabTests.c_str(), nullptr, sel(2))) { tab = 2; ImGui::EndTabItem(); }
+        if (ImGui::GetFrameCount() > 3) historyTab_ = -1;
+        ImGui::EndTabBar();
+    }
+    if (tab != 0) {
+        ImGui::BeginChild("histtab", ImVec2(0, 0));
+        if (tab == 1) CompareView(rows); else TestsCard(historyGame_);
+        ImGui::EndChild();
+        ImGui::EndPopup();
+        if (!open) historyGame_.clear();
+        return;
+    }
 
     // FPS trend: average bars with the 1% low marked, last 30 sessions that had FPS
     std::vector<const Session*> fps;
@@ -1823,21 +2106,59 @@ void App::HistoryPopup() {
     }
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
-    // every session, newest first
-    if (ImGui::BeginTable("sessions", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH, ImVec2(0, 0))) {
+    // every session, newest first - tick two to compare them
+    ImGui::TextColored(kDim, "Tick two sessions to compare them side by side.");
+    if (ImGui::BeginTable("sessions", 8, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH, ImVec2(0, 0))) {
         ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 26 * s_);
         ImGui::TableSetupColumn("When");
         ImGui::TableSetupColumn("Played");
         ImGui::TableSetupColumn("Avg FPS");
         ImGui::TableSetupColumn("1% low");
+        ImGui::TableSetupColumn("0.1% low");
+        ImGui::TableSetupColumn("Stutters/min");
+        ImGui::TableSetupColumn("Notes");
         ImGui::TableHeadersRow();
         for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
             const Session* r = *it;
+            int idx = (int)(r - data_.history.data());
             ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            bool picked = idx == cmpA_ || idx == cmpB_;
+            ImGui::PushID(idx);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, Lighten(g_chip, 0.08f));   // visible on the dark rows
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, Lighten(g_chip, 0.16f));
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, g_accent);
+            bool clicked = ImGui::Checkbox("##pick", &picked);
+            ImGui::PopStyleColor(3);
+            if (clicked) {
+                if (picked) { if (cmpA_ < 0) cmpA_ = idx; else { if (cmpB_ >= 0) cmpA_ = cmpB_; cmpB_ = idx; } }
+                else { if (cmpA_ == idx) { cmpA_ = cmpB_; cmpB_ = -1; } else if (cmpB_ == idx) cmpB_ = -1; }
+            }
+            ImGui::PopID();
             ImGui::TableNextColumn(); ImGui::TextUnformatted(PrettyDate(r->date).c_str());
             ImGui::TableNextColumn(); ImGui::TextUnformatted(util::FormatDuration(r->minutes).c_str());
             ImGui::TableNextColumn(); if (r->avgFps > 0) ImGui::Text("%.0f", r->avgFps); else ImGui::TextColored(kDim, "--");
             ImGui::TableNextColumn(); if (r->low1 > 0) ImGui::Text("%.0f", r->low1); else ImGui::TextColored(kDim, "--");
+            ImGui::TableNextColumn(); if (r->low01 > 0) ImGui::Text("%.0f", r->low01); else ImGui::TextColored(kDim, "--");
+            ImGui::TableNextColumn(); if (r->StuttersPerMin() >= 0) ImGui::Text("%.1f", r->StuttersPerMin()); else ImGui::TextColored(kDim, "--");
+            ImGui::TableNextColumn();
+            std::vector<std::string> notes;
+            if (!r->exit.empty()) notes.push_back(r->exit == "hang" ? "not responding" : r->exit);
+            if (!r->variant.empty()) notes.push_back("test");
+            if (!r->cause.empty()) notes.push_back("stutters: " + r->cause);
+            if (!r->preset.empty() && notes.empty()) notes.push_back(r->preset);
+            ImGui::TextColored(r->exit.empty() ? kDim : Hex("#F0605D"), "%s", util::Join(notes, ", ").c_str());
+            if (ImGui::IsItemHovered() && !r->tweaks.empty()) {
+                std::vector<std::string> names;
+                for (auto& id : r->tweaks) if (auto* t = tweakset::Find(id)) names.push_back(t->name);
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(420 * s_);
+                ImGui::Text("Tweaks (%s): %s", r->preset.c_str(), util::Join(names, ", ").c_str());
+                if (!r->cores.empty()) ImGui::Text("Cores: %s", r->cores.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
         }
         ImGui::EndTable();
     }
@@ -2120,6 +2441,16 @@ void App::GameSettingsPopup() {
     // ---- footer: Remove   [error]   Cancel  Save
     ImGui::Dummy(ImVec2(0, 6 * s_));
     if (ImGui::Button("Remove game")) del = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Copy share code")) {
+        for (auto& p : data_.profiles)
+            if (p.name == editGame_) {
+                ImGui::SetClipboardText(share::Encode(p).c_str());
+                editError_.clear();
+                Log("Share code for " + editGame_ + " copied - paste it to a friend (Games > Add from code)");
+            }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copies this game's saved settings as one line of text for a friend.\nYour launcher path isn't included.");
     if (!editError_.empty()) {
         ImGui::SameLine(0, 16 * s_);
         ImGui::AlignTextToFramePadding();
@@ -2429,10 +2760,9 @@ void App::PageSystem() {
         ImGui::SetClipboardText(all.c_str());
         Log("System specs copied to clipboard");
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Clear shader cache")) ClearShaderCache();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fixes stutter or crashes after a graphics driver update");
     EndCard();
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    DriverCard();
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
     BeginCard("checks");
@@ -2464,6 +2794,20 @@ void App::PageSystem() {
 
 // ------------------------------------------------------------ Activity
 void App::PageActivity() {
+    auto toggle = [&](const char* label, bool on) { return on ? AccentButton(label, ImVec2(0, 0)) : ImGui::Button(label); };
+    if (toggle("Timeline", showTimeline_)) showTimeline_ = true;
+    ImGui::SameLine();
+    if (toggle("Log", !showTimeline_)) showTimeline_ = false;
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kDim, "%s", showTimeline_ ? "Every change made and undone, and what's still changed" : "Everything Project OptM did, as it happened");
+    ImGui::Dummy(ImVec2(0, 2 * s_));
+    if (showTimeline_) {
+        ImGui::BeginChild("timelineScroll", ImVec2(0, 0));
+        TimelineView();
+        ImGui::EndChild();
+        return;
+    }
     ImGui::PushStyleColor(ImGuiCol_ChildBg, g_card2);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * s_, 12 * s_));
     ImGui::BeginChild("log", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -2926,6 +3270,9 @@ void App::PageSettings() {
     EndCard();
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
+    ExperimentalCard();
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+
     BeginCard("data");
     Label("PROFILES AND DATA");
     ImGui::Dummy(ImVec2(0, 2 * s_));
@@ -3373,4 +3720,531 @@ void App::PageTweaks() {
     card("System");
     card("GPU");
     ImGui::EndChild();
+}
+// ============================================================ 2.1.1 experimental
+// ------------------------------------------------------------ Compare two sessions
+void App::CompareView(const std::vector<const Session*>& rows) {
+    const Session* a = nullptr;
+    const Session* b = nullptr;
+    int n = (int)data_.history.size();
+    if (cmpA_ >= 0 && cmpB_ >= 0 && cmpA_ < n && cmpB_ < n) {
+        a = &data_.history[std::min(cmpA_, cmpB_)];   // older on the left
+        b = &data_.history[std::max(cmpA_, cmpB_)];
+    } else if (rows.size() >= 2) {
+        a = rows[rows.size() - 2];
+        b = rows.back();
+        ImGui::TextColored(kDim, "Showing your last two sessions. Tick any two in the Sessions tab to compare those instead.");
+    }
+    if (!a || !b) { ImGui::TextColored(kDim, "Play this game twice to compare two sessions."); return; }
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    if (!ImGui::BeginTable("cmp", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) return;
+    ImGui::TableSetupColumn("", 0, 1.3f);
+    ImGui::TableSetupColumn((PrettyDate(a->date) + "###a").c_str(), 0, 1.0f);
+    ImGui::TableSetupColumn((PrettyDate(b->date) + "###b").c_str(), 0, 1.0f);
+    ImGui::TableSetupColumn("Change", 0, 0.8f);
+    ImGui::TableHeadersRow();
+    for (auto& r : insights::Compare(*a, *b)) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn(); ImGui::TextColored(kSub, "%s", r.what.c_str());
+        ImGui::TableNextColumn(); ImGui::TextUnformatted(r.a.c_str());
+        ImGui::TableNextColumn(); ImGui::TextUnformatted(r.b.c_str());
+        ImGui::TableNextColumn();
+        ImVec4 c = r.better > 0 ? kGreen : r.better < 0 ? Hex("#F0605D") : kDim;
+        ImGui::TextColored(c, "%s", r.diff.c_str());
+    }
+    ImGui::EndTable();
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    // what was different between them
+    std::vector<std::string> onlyA, onlyB;
+    for (auto& t : a->tweaks) if (!util::Contains(b->tweaks, t)) if (auto* x = tweakset::Find(t)) onlyA.push_back(x->name);
+    for (auto& t : b->tweaks) if (!util::Contains(a->tweaks, t)) if (auto* x = tweakset::Find(t)) onlyB.push_back(x->name);
+    ImGui::PushTextWrapPos(0);
+    if (!a->tweaks.empty() && !b->tweaks.empty()) {
+        if (onlyA.empty() && onlyB.empty()) ImGui::TextColored(kDim, "Same tweaks in both sessions - differences come from the game (map, settings, patch) or the PC.");
+        else {
+            if (!onlyB.empty()) ImGui::TextColored(kSub, "Only in the newer one: %s", util::Join(onlyB, ", ").c_str());
+            if (!onlyA.empty()) ImGui::TextColored(kSub, "Only in the older one: %s", util::Join(onlyA, ", ").c_str());
+        }
+    } else ImGui::TextColored(kDim, "Sessions from before 2.1.1 don't record which tweaks were on.");
+    ImGui::TextColored(kDim, "Green = better, red = worse. Small changes (a few percent) are normal between two sessions of the same game.");
+    ImGui::PopTextWrapPos();
+}
+
+// ------------------------------------------------------------ Tests: which CCD, does a tweak help
+void App::TestsCard(const std::string& game) {
+    const GameProfile* prof = nullptr;
+    for (auto& p : data_.profiles) if (p.name == game) prof = &p;
+    ImGui::PushTextWrapPos(0);
+    if (!prof) { ImGui::TextColored(kDim, "This game has no profile anymore."); ImGui::PopTextWrapPos(); return; }
+    auto it = data_.tests.find(game);
+    if (it != data_.tests.end()) {
+        insights::Test t = insights::Describe(it->second);
+        insights::Stats sa = insights::Of(data_.history, game, t.a, t.since), sb = insights::Of(data_.history, game, t.b, t.since);
+        ImGui::PushFont(fontBold_);
+        ImGui::Text("%s vs %s", t.aName.c_str(), t.bName.c_str());
+        ImGui::PopFont();
+        if (!t.since.empty()) ImGui::TextColored(kDim, "Started %s", PrettyDate(t.since).c_str());
+        bool done = insights::Finished(t, data_.history, game);
+        if (!done) {
+            std::string next = insights::Next(t, data_.history, game);
+            ImGui::TextColored(kSub, "%s: %d of %d sessions   |   %s: %d of %d sessions", t.aName.c_str(), sa.n, t.need, t.bName.c_str(), sb.n, t.need);
+            ImGui::TextColored(kAmber, "Next session uses: %s", (next == t.a ? t.aName : t.bName).c_str());
+            ImGui::TextColored(kDim, "Play normally - a session counts when it lasts 5+ minutes with FPS. Similar play each time (same mode or map) gives a clearer answer.");
+        }
+        if (sa.n || sb.n) {
+            ImGui::Dummy(ImVec2(0, 4 * s_));
+            if (ImGui::BeginTable("testres", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+                ImGui::TableSetupColumn(""); ImGui::TableSetupColumn("Avg FPS"); ImGui::TableSetupColumn("1% low");
+                ImGui::TableSetupColumn("0.1% low"); ImGui::TableSetupColumn("Stutters/min");
+                ImGui::TableHeadersRow();
+                auto row = [&](const std::string& name, const insights::Stats& s) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn(); ImGui::Text("%s (%d)", name.c_str(), s.n);
+                    ImGui::TableNextColumn(); if (s.n) ImGui::Text("%.0f", s.avg); else ImGui::TextColored(kDim, "--");
+                    ImGui::TableNextColumn(); if (s.n) ImGui::Text("%.0f", s.low); else ImGui::TextColored(kDim, "--");
+                    ImGui::TableNextColumn(); if (s.low01 > 0) ImGui::Text("%.0f", s.low01); else ImGui::TextColored(kDim, "--");
+                    ImGui::TableNextColumn(); if (s.stutters >= 0) ImGui::Text("%.1f", s.stutters); else ImGui::TextColored(kDim, "--");
+                };
+                row(t.aName, sa);
+                row(t.bName, sb);
+                ImGui::EndTable();
+            }
+        }
+        if (done) {
+            std::string winner;
+            std::string v = insights::Verdict(t, sa, sb, winner);
+            ImGui::Dummy(ImVec2(0, 4 * s_));
+            ImGui::TextColored(winner.empty() ? kSub : kGreen, "%s", v.c_str());
+            // the suggestion is only applied if you click it
+            GameProfile np = *prof;
+            std::string action;
+            if (t.id == "ccd" && winner == t.b && prof->cores != "Other") { action = "Use the Frequency CCD for " + game; np.cores = "Other"; np.softPin = false; }
+            if (t.id == "ccd" && winner == t.a && prof->cores == "Other") { action = "Use the V-Cache CCD for " + game; np.cores = "Best"; }
+            if (t.id.rfind("ab:", 0) == 0 && !winner.empty()) {
+                std::string id = t.id.substr(3);
+                auto ids = tweakset::ChosenFor(data_, prof);
+                bool want = winner == t.a, has = ids.count(id) > 0;
+                if (want != has) {
+                    const tweakset::Tweak* tw = tweakset::Find(id);
+                    std::string nm = tw ? tw->name : id;
+                    action = want ? "Turn " + nm + " on for " + game : "Turn off " + nm + " for " + game;
+                    if (want) ids.insert(id); else ids.erase(id);
+                    np.tweaks = "Custom";
+                    np.tweakIds.assign(ids.begin(), ids.end());
+                }
+            }
+            if (!action.empty() && AccentButton(action.c_str(), ImVec2(0, 0))) {
+                if (data_.ProfilesChanged()) ReloadProfiles();
+                if (data_.SaveProfile(np)) {
+                    data_.LoadProfiles();
+                    opt_.SyncPerGameSettings();
+                    Log("Test result applied: " + action);
+                    data_.tests.erase(game);
+                    data_.SaveConfig();
+                }
+                ImGui::PopTextWrapPos();
+                return;
+            }
+            if (!action.empty()) ImGui::SameLine();
+        }
+        if (ImGui::Button(done ? "Clear the test" : "Stop the test")) StartTest(game, "");
+        ImGui::PopTextWrapPos();
+        return;
+    }
+
+    // no test yet: start one
+    ImGui::TextColored(kSub, "A test tries two setups over your next sessions of this game, one after the other, and tells you "
+                             "which ran better. Your game settings aren't changed - you decide at the end.");
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    bool ccdOk = sys_.layout == CpuLayout::DualX3D && !prof->antiCheat;
+    ImGui::PushFont(fontBold_);
+    ImGui::TextUnformatted("Which CCD is faster for this game?");
+    ImGui::PopFont();
+    ImGui::TextColored(kDim, "On a dual-CCD X3D chip, most games run best on the V-Cache cores, but some prefer the higher clocks of the other CCD. "
+                             "4 sessions: 2 on each.");
+    ImGui::BeginDisabled(!ccdOk);
+    if (ImGui::Button("Start the CCD test")) StartTest(game, "ccd");
+    ImGui::EndDisabled();
+    if (!ccdOk) {
+        ImGui::SameLine();
+        ImGui::TextColored(kDim, "%s", prof->antiCheat ? "Not for anti-cheat games (their cores are never changed)." : "Needs a dual-CCD X3D CPU (like a 7950X3D or 9950X3D).");
+    }
+    ImGui::Dummy(ImVec2(0, 8 * s_));
+    ImGui::PushFont(fontBold_);
+    ImGui::TextUnformatted("Does a tweak help?");
+    ImGui::PopFont();
+    ImGui::TextColored(kDim, "6 sessions: 3 with the tweak on, 3 with it off.");
+    static std::string pick = "timer";
+    const tweakset::Tweak* pt = tweakset::Find(pick);
+    ImGui::SetNextItemWidth(280 * s_);
+    if (ImGui::BeginCombo("##abtweak", pt ? pt->name : pick.c_str())) {
+        for (auto& t : tweakset::All()) {
+            if (!tweakset::Unavailable(t.id, sys_, data_).empty()) continue;
+            if (ImGui::Selectable(t.name, pick == t.id)) pick = t.id;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.desc);
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Start the tweak test")) StartTest(game, "ab:" + pick);
+    ImGui::PopTextWrapPos();
+}
+
+// ------------------------------------------------------------ "Is this a game?"
+namespace {
+// full-screen apps that are never games
+const char* kNotGames[] = {
+    "explorer", "chrome", "msedge", "firefox", "opera", "opera_gx", "brave", "vivaldi", "iexplore", "arc",
+    "vlc", "mpc-hc", "mpc-hc64", "mpc-be", "mpc-be64", "potplayer", "potplayermini", "potplayermini64", "wmplayer", "mpv",
+    "video.ui", "microsoft.media.player", "spotify", "netflix", "plex", "kodi", "discord", "obs64", "obs32", "streamlabs obs",
+    "powerpnt", "winword", "excel", "outlook", "onenote", "acrord32", "acrobat", "applicationframehost", "lockapp", "searchhost",
+    "shellexperiencehost", "startmenuexperiencehost", "textinputhost", "taskmgr", "mstsc", "vmconnect", "vmware", "virtualbox",
+    "virtualboxvm", "zoom", "teams", "ms-teams", "slack", "steam", "steamwebhelper", "epicgameslauncher", "battle.net", "eadesktop",
+    "riotclientux", "upc", "galaxyclient", "xboxpcapp", "code", "devenv", "windowsterminal", "cmd", "powershell", "conhost",
+    "projectoptm", "screenclippinghost", "snippingtool", "photos", "microsoft.photos", "rundll32", "dwm", "notepad",
+};
+}  // namespace
+
+void App::GamePromptTick() {
+    if (!data_.askGames || !data_.autoOptimize || !askExe_.empty()) return;
+    HWND fg = GetForegroundWindow();
+    // test copies: a hidden stand-in window counts as the foreground one (nothing takes over the screen)
+    if (!util::EnvVar(L"OPTM_TEST_FOREGROUND").empty() && !util::EnvVar(L"OPTM_DATA_DIR").empty())
+        fg = FindWindowW(util::EnvVar(L"OPTM_TEST_FOREGROUND").c_str(), nullptr);
+    DWORD pid = 0;
+    if (fg) GetWindowThreadProcessId(fg, &pid);
+    auto reset = [&] { askCandidate_.clear(); askSince_ = 0; };
+    if (!fg || fg == hwnd_ || !pid || pid == GetCurrentProcessId()) { reset(); return; }
+    // full screen: the window covers its whole monitor (exclusive, borderless or maximized without a frame)
+    RECT wr;
+    MONITORINFO mi = { sizeof(mi) };
+    if (!GetWindowRect(fg, &wr) || !GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mi) ||
+        wr.left > mi.rcMonitor.left || wr.top > mi.rcMonitor.top || wr.right < mi.rcMonitor.right || wr.bottom < mi.rcMonitor.bottom) { reset(); return; }
+    wchar_t cls[64] = {};
+    GetClassNameW(fg, cls, 64);
+    if (!wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW")) { reset(); return; }   // the desktop
+    std::string name = procs_.NameOf(pid), lower = util::Lower(name);
+    if (lower.empty() || askLater_.count(lower) || util::Contains(data_.ignoredExes, name)) { reset(); return; }
+    for (auto* n : kNotGames) if (lower == n) { reset(); return; }
+    for (auto& p : data_.profiles) if (util::Contains(p.exes, name)) { reset(); return; }
+    std::wstring path = proc::ImagePath(pid);
+    std::string lp = util::Lower(util::Narrow(path));
+    if (path.empty() || lp.find(":\\windows\\") != std::string::npos) { reset(); return; }
+    if (lower != askCandidate_) { askCandidate_ = lower; askSince_ = Ms(); askPath_ = path; return; }
+    uint64_t need = 120000;   // 2 minutes full screen
+    std::wstring t = util::EnvVar(L"OPTM_TEST_ASK_SECS");
+    if (!t.empty() && !util::EnvVar(L"OPTM_DATA_DIR").empty()) need = (uint64_t)_wtoi(t.c_str()) * 1000;
+    if (Ms() - askSince_ < need) return;
+    askExe_ = name;
+    Log("? " + name + ".exe has been full screen for a while - is it a game? (Home page)");
+    Balloon(("Is " + name + " a game? Open Project OptM to add it - or say no and it won't ask again.").c_str());
+}
+
+void App::AnswerGamePrompt(int answer) {
+    std::string exe = askExe_;
+    askExe_.clear();
+    askCandidate_.clear();
+    if (exe.empty()) return;
+    if (answer < 0) { askLater_.insert(util::Lower(exe)); Log("OK - won't ask about " + exe + " again until Project OptM restarts"); return; }
+    if (answer == 0) {
+        if (!util::Contains(data_.ignoredExes, exe)) data_.ignoredExes.push_back(exe);
+        data_.SaveConfig();
+        Log(exe + " isn't a game - it won't be asked about or detected again");
+        return;
+    }
+    std::string name = GameDetector::GameNameFromVersionInfo(askPath_);
+    if (name.empty()) name = exe;
+    std::string ac;
+    bool anti = detector_.AntiCheatNear(askPath_, ac);
+    if (data_.ProfilesChanged()) ReloadProfiles();
+    std::string added = data_.AppendProfile(name, exe, "you said it's a game", "", anti, ac);
+    data_.autoAdded.push_back(added);
+    data_.SaveConfig();
+    data_.LoadProfiles();
+    opt_.SyncLaunchPriority();
+    Log(">> Added " + added + " (" + exe + ".exe)" + (anti ? " - " + ac + " anti-cheat found, so it's in safe mode" : "") + " - it's optimized from now on");
+    lastTick_ = 0;   // start optimizing right away
+}
+
+void App::GamePromptCard() {
+    if (askExe_.empty()) return;
+    BeginCard("askgame");
+    Label("NEW GAME?");
+    ImGui::PushFont(fontBold_);
+    ImGui::Text("Is %s a game?", askExe_.c_str());
+    ImGui::PopFont();
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(kSub, "It's been running full screen for a while, but it isn't in your games. Say yes and it's optimized like your other games from now on.");
+    ImGui::TextColored(kDim, "%s", util::Narrow(askPath_).c_str());
+    ImGui::PopTextWrapPos();
+    if (AccentButton("Yes, it's a game", ImVec2(0, 0))) AnswerGamePrompt(1);
+    ImGui::SameLine();
+    if (ImGui::Button("No, never ask")) AnswerGamePrompt(0);
+    ImGui::SameLine();
+    if (ImGui::Button("Not now")) AnswerGamePrompt(-1);
+    EndCard();
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+}
+
+// ------------------------------------------------------------ share codes
+void App::ImportPopup() {
+    if (!importOpen_) return;
+    if (!ImGui::IsPopupOpen("importgame")) ImGui::OpenPopup("importgame");
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowSize(ImVec2(std::min(640 * s_, io.DisplaySize.x - 60 * s_), 0));
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * s_, 16 * s_));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, g_cardR);
+    if (!ImGui::BeginPopupModal("importgame", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PopStyleVar(2);
+        return;
+    }
+    ImGui::PopStyleVar(2);
+    ImGui::PushFont(fontTitle_);
+    ImGui::TextUnformatted("Add a game from a code");
+    ImGui::PopFont();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::min(600 * s_, io.DisplaySize.x - 100 * s_));
+    ImGui::TextColored(kSub, "Paste a game code a friend copied from their Project OptM (a game's settings > Copy share code).");
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, g_chip);
+    ImGui::InputTextMultiline("##code", importBuf_, sizeof(importBuf_), ImVec2(std::min(600 * s_, io.DisplaySize.x - 100 * s_), 70 * s_));
+    ImGui::PopStyleColor();
+    GameProfile p;
+    std::string err;
+    bool ok = !util::Trim(importBuf_).empty() && share::Decode(importBuf_, p, err);
+    std::string taken;
+    if (ok) for (auto& e : p.exes) for (auto& q : data_.profiles) if (util::Contains(q.exes, e)) taken = e + ".exe is already " + q.name + " in your games.";
+    if (ok) {
+        ImGui::Dummy(ImVec2(0, 4 * s_));
+        Label("THIS CODE ADDS");
+        ImGui::PushFont(fontBold_);
+        ImGui::TextUnformatted(p.name.c_str());
+        ImGui::PopFont();
+        std::string cores = p.cores == "Best" ? (p.softPin ? "best cores, preferred" : "best cores") : p.cores == "Other" ? "other CCD" : "all cores";
+        std::vector<std::string> lines = {
+            "Exe: " + util::Join(p.exes, ", "),
+            p.antiCheat ? "Anti-cheat safe mode (the game process is never touched)" : "Priority " + PriorityLabel(p.priority) + ", " + cores,
+            "Tweaks: " + (p.tweaks.empty() ? std::string("your Tweaks page preset") : p.tweaks == "Custom" ? "its own set (" + std::to_string(p.tweakIds.size()) + " tweaks)" : p.tweaks),
+        };
+        if (!p.launchPriority.empty()) lines.push_back("Launch priority: " + PriorityLabel(p.launchPriority));
+        if (p.ramCleanupMins > 0) lines.push_back("RAM cleanup every " + std::to_string(p.ramCleanupMins) + " min");
+        if (!p.close.empty()) lines.push_back("Closes when it starts: " + util::Join(p.close, ", "));
+        if (!p.boost.empty()) lines.push_back("High priority helpers: " + util::Join(p.boost, ", "));
+        if (!p.keep.empty()) lines.push_back("Keeps open: " + util::Join(p.keep, ", "));
+        for (auto& l : lines) ImGui::TextColored(kSub, "  %s", l.c_str());
+        if (!p.tweaks.empty() && p.tweaks != "Custom" && !tweakset::PresetExists(data_, p.tweaks))
+            ImGui::TextColored(kAmber, "  You don't have a preset called %s - your Tweaks page preset is used instead.", p.tweaks.c_str());
+    } else if (!err.empty()) ImGui::TextColored(kAmber, "%s", err.c_str());
+    if (!taken.empty()) ImGui::TextColored(kAmber, "%s", taken.c_str());
+    if (!importError_.empty()) ImGui::TextColored(kAmber, "%s", importError_.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    bool close = false;
+    ImGui::BeginDisabled(!ok || !taken.empty());
+    if (AccentButton("Add game", ImVec2(120 * s_, 0))) close = ImportGame(p);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) close = true;
+    if (close) { importOpen_ = false; importBuf_[0] = 0; importError_.clear(); ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
+}
+
+bool App::ImportGame(GameProfile p) {
+    if (data_.ProfilesChanged()) ReloadProfiles();
+    std::string name = data_.AppendProfile(p.name, p.exes[0], "a share code", "", p.antiCheat, "");
+    data_.LoadProfiles();
+    p.name = name;
+    if (!data_.SaveProfile(p)) { importError_ = "Couldn't save profiles.ini - is it open somewhere?"; return false; }
+    data_.LoadProfiles();
+    opt_.SyncLaunchPriority();
+    opt_.SyncPerGameSettings();
+    Log("Added " + name + " from a share code");
+    data_.AddTimeline("fix", "Added " + name + " from a share code");
+    return true;
+}
+
+// ------------------------------------------------------------ System page: graphics driver
+void App::RefreshShaderCache() {
+    if (cacheJob_.valid()) return;
+    auto dirs = driverinfo::ShaderCacheDirs(sys_);
+    cacheJob_ = std::async(std::launch::async, [dirs] { return driverinfo::ShaderCacheSize(dirs); });
+}
+
+void App::DriverCard() {
+    BeginCard("driver");
+    Label("GRAPHICS DRIVER");
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    ImGui::PushTextWrapPos(0);
+    if (!sys_.gpus.empty())
+        ImGui::Text("%s%s%s", sys_.gpus[0].name.c_str(), driverVersion_.empty() ? "" : "  |  driver ", driverVersion_.c_str());
+    if (driverChanged_) {
+        ImGui::TextColored(kAmber, "The driver was updated since last time (it was %s). If games stutter or crash since then, clear the shader cache below.",
+                           data_.gpuDriverSeen.c_str());
+        if (ImGui::SmallButton("Got it")) { driverChanged_ = false; data_.gpuDriverSeen = driverVersion_; data_.SaveConfig(); }
+    }
+    ImGui::Dummy(ImVec2(0, 2 * s_));
+    char b[96];
+    if (!cacheKnown_) snprintf(b, sizeof(b), "Shader cache: measuring...");
+    else snprintf(b, sizeof(b), "Shader cache: %.2f GB in %d files", cache_.bytes / 1073741824.0, cache_.files);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kSub, "%s", b);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Compiled shaders from DirectX and your graphics driver. Games rebuild them after a clear (a minute of stutter the first time).");
+    ImGui::SameLine();
+    if (ImGui::Button("Clear shader cache")) ClearShaderCache();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fixes stutter or crashes after a graphics driver update");
+    ImGui::SameLine();
+    if (ImGui::Button("Recount")) { cacheKnown_ = false; RefreshShaderCache(); }
+
+    if (!amd_.empty()) {
+        ImGui::Dummy(ImVec2(0, 6 * s_));
+        Label("ADRENALIN SETTINGS (READ-ONLY)");
+        for (auto& st : amd_) {
+            ImGui::TextColored(kDim, "%s", st.name.c_str());
+            ImGui::SameLine(210 * s_);
+            ImGui::TextColored(st.flag ? kAmber : kText, "%s", st.value.c_str());
+            if (!st.tip.empty()) {
+                ImGui::Indent(210 * s_ - ImGui::GetStyle().WindowPadding.x);
+                ImGui::TextColored(kDim, "%s", st.tip.c_str());
+                ImGui::Unindent(210 * s_ - ImGui::GetStyle().WindowPadding.x);
+            }
+        }
+        ImGui::TextColored(kDim, "Your global settings in AMD Software. Project OptM only reads them - change them in Adrenalin (a game's own Adrenalin profile can override them).");
+    } else if (!sys_.gpus.empty() && sys_.gpus[0].vendor != "AMD") {
+        ImGui::TextColored(kDim, "Driver settings can only be read for AMD Radeon cards so far.");
+    }
+    ImGui::PopTextWrapPos();
+    EndCard();
+}
+
+// ------------------------------------------------------------ Settings: experimental switches
+void App::ExperimentalCard() {
+    auto toggle = [&](const char* label, bool on) { return on ? AccentButton(label, ImVec2(0, 0)) : ImGui::Button(label); };
+    BeginCard("experimental");
+    Label("EXPERIMENTAL (" OPTM_VERSION ")");
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    if (toggle(data_.latencyOn ? "Stutter-cause finder: ON" : "Stutter-cause finder: OFF", data_.latencyOn)) {
+        data_.latencyOn = !data_.latencyOn;
+        data_.SaveConfig();
+        Log(data_.latencyOn ? "Stutter-cause finder on - it starts with the next game" : "Stutter-cause finder off");
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("While you play, times how long each driver keeps a CPU core busy (like LatencyMon).\n"
+                          "When the game stutters, the driver that was busy is named in its history.\n"
+                          "Costs a little CPU, so it's off by default. Needs the FPS graph on.");
+    ImGui::SameLine();
+    if (toggle(data_.pingOn ? "Server ping: ON" : "Server ping: OFF", data_.pingOn)) { data_.pingOn = !data_.pingOn; data_.SaveConfig(); }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Finds the server the game talks to (from Windows' network statistics) and pings it every 2 seconds.\n"
+                          "Shown on Home and in the overlay (add Ping on the Overlay page). Some servers don't answer pings.");
+    if (toggle(data_.askGames ? "Ask about full-screen apps: ON" : "Ask about full-screen apps: OFF", data_.askGames)) {
+        data_.askGames = !data_.askGames;
+        data_.SaveConfig();
+        askExe_.clear();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("When an app that isn't in your games runs full screen for 2 minutes, Project OptM asks if it's a game.");
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(kDim, "Test features of this build. Crash detection, 0.1%% lows, stutters and session comparison are always on. "
+                             "Game tests are in each game's history (the clock button on its tile).");
+    ImGui::PopTextWrapPos();
+    EndCard();
+}
+
+// ------------------------------------------------------------ Activity: timeline of changes
+void App::TimelineFromLog(const std::string& line) {
+    static const std::pair<const char*, const char*> kinds[] = {
+        { "Launch priority set:", "persist" }, { "Launch priority removed", "persist" }, { "(from next launch)", "persist" },
+        { "Fullscreen optimizations turned back on", "persist" }, { "GPU preference put back", "persist" },
+        { "!! PANIC", "panic" }, { "Fix applied:", "fix" }, { "Shader cache cleared", "fix" }, { "Restarted services left paused", "fix" },
+        { "Undid tweaks left on by the last session", "fix" }, { "Restored your power plan", "fix" },
+    };
+    for (auto& [pat, kind] : kinds)
+        if (line.find(pat) != std::string::npos) { data_.AddTimeline(kind, util::Trim(line)); return; }
+}
+
+void App::TimelineView() {
+    // what stays changed between sessions
+    BeginCard("persist");
+    Label("STILL CHANGED ON YOUR PC");
+    ImGui::Dummy(ImVec2(0, 2 * s_));
+    ImGui::PushTextWrapPos(0);
+    std::vector<std::string> items;
+    for (auto& e : data_.ifeoManaged) items.push_back("Launch priority: " + e);
+    for (auto& f : data_.fsoManaged) items.push_back("Fullscreen optimizations off: " + f.substr(f.find_last_of("\\/") + 1));
+    for (auto& g : data_.gpuManaged) { std::string gp = g.substr(0, g.find('|')); items.push_back("GPU preference: " + gp.substr(gp.find_last_of("\\/") + 1)); }
+    if (opt_.Active()) items.push_back("Session changes for " + opt_.Active()->name + " (undone when it closes)");
+    if (items.empty()) ImGui::TextColored(kDim, "Nothing - your PC is exactly as it was.");
+    for (auto& i : items) ImGui::TextColored(kSub, "  %s", i.c_str());
+    ImGui::TextColored(kDim, "Everything else is put back when each game closes, so there's no older state to roll back to.");
+    bool persistent = !data_.ifeoManaged.empty() || !data_.fsoManaged.empty() || !data_.gpuManaged.empty();
+    ImGui::BeginDisabled(!persistent);
+    if (ImGui::Button("Put these back now")) {
+        opt_.RevertOnExit();
+        Log("Per-game Windows settings put back by hand (they're set again the next time Project OptM starts)");
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Removes launch priority, fullscreen optimization and GPU preference settings now.\n"
+                          "Project OptM sets them again the next time it starts (Restore everything on exit does this for you).");
+    ImGui::PopTextWrapPos();
+    EndCard();
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+
+    BeginCard("timeline");
+    Label("TIMELINE");
+    ImGui::Dummy(ImVec2(0, 2 * s_));
+    if (data_.timeline.empty()) ImGui::TextColored(kDim, "Nothing yet - every change Project OptM makes and undoes shows up here.");
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float x0 = ImGui::GetCursorPosX();
+    for (int i = (int)data_.timeline.size() - 1; i >= 0; i--) {
+        const std::string& e = data_.timeline[i];
+        size_t p1 = e.find('|'), p2 = p1 == std::string::npos ? p1 : e.find('|', p1 + 1);
+        if (p2 == std::string::npos) continue;
+        std::string when = e.substr(0, p1), kind = e.substr(p1 + 1, p2 - p1 - 1), text = e.substr(p2 + 1);
+        size_t nl = text.find('\n');
+        std::string first = text.substr(0, nl);
+        std::string rest = nl == std::string::npos ? "" : text.substr(nl + 1);
+        ImVec4 c = kind == "start" ? kGreen : kind == "end" ? g_accent : kind == "crash" || kind == "panic" ? Hex("#F0605D")
+                 : kind == "persist" ? kAmber : kind == "test" ? Hex("#8E6CFF") : kSub;
+        const char* tag = kind == "start" ? "Applied" : kind == "end" ? "Undone" : kind == "crash" ? "Crash" : kind == "panic" ? "Panic"
+                        : kind == "persist" ? "Windows setting" : kind == "test" ? "Test" : "Fix";
+        ImGui::PushID(i);
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        dl->AddCircleFilled(ImVec2(p.x + 5 * s_, p.y + ImGui::GetTextLineHeight() / 2 + 1), 4 * s_, U32(c), 12);
+        ImGui::SetCursorPosX(x0 + 16 * s_);
+        ImGui::TextColored(kDim, "%s", PrettyDate(when.substr(0, 16)).c_str());
+        ImGui::SameLine(x0 + 150 * s_);
+        ImGui::TextColored(c, "%s", tag);
+        ImGui::SameLine(x0 + 280 * s_);
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextUnformatted(first.c_str());
+        ImGui::PopTextWrapPos();
+        if (!rest.empty()) {
+            auto lines = util::Split(rest, '\n');
+            ImGui::SetCursorPosX(x0 + 280 * s_);
+            if (ImGui::TreeNodeEx("details", ImGuiTreeNodeFlags_SpanAvailWidth, "%s", Plural(lines.size(), "change").c_str())) {
+                for (auto& l : lines) { ImGui::SetCursorPosX(x0 + 300 * s_); ImGui::TextColored(kSub, "%s", l.c_str()); }
+                ImGui::TreePop();
+            }
+        }
+        ImGui::PopID();
+    }
+    EndCard();
+}
+
+// ------------------------------------------------------------ developer check: made-up frames
+void App::SyntheticFrames() {
+    if (!synthFps_ || !opt_.Active()) { synthLast_ = 0; return; }
+    uint64_t now = Ms();
+    if (!synthLast_) { synthLast_ = now; return; }
+    double budget = (double)(now - synthLast_);
+    synthLast_ = now;
+    // ~140 FPS with a little noise, a 45 ms hitch every ~6 s and a 90 ms one every ~20 s
+    while (budget > 0) {
+        synthPhase_ += 1;
+        int k = (int)synthPhase_;
+        double ms = 7.1 + 0.8 * std::sin(synthPhase_ * 0.37) + (k % 7 == 0 ? 1.5 : 0);
+        if (k % 850 == 0) ms = 45;
+        if (k % 2800 == 0) ms = 90;
+        frames_.InjectForTest(ms);
+        budget -= ms;
+    }
 }

@@ -32,6 +32,8 @@ public:
     bool Describe(const std::wstring& path, DetectedGame& out) const;
     // Pure helpers, exposed for tests
     static bool LooksLikeHelper(const std::string& exeLower);
+    // Anti-cheat files next to any exe (for games added by hand / "Is this a game?")
+    bool AntiCheatNear(const std::wstring& exePath, std::string& which) const;
     static std::string GameNameFromVersionInfo(const std::wstring& exePath);
 
 private:
