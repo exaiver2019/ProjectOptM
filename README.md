@@ -22,7 +22,7 @@ Version 2 is a native app: one small ProjectOptM.exe that starts instantly and i
 - **Session history:** every session is saved with its playtime and FPS, and each game has a history view showing how its FPS changes over time.
 - **System health checks:** checks EXPO/XMP, refresh rate, Game Mode, background recording, Intel 13th/14th gen microcode and more. Many can be fixed with one click.
 - **Restores everything:** when a game closes, when you exit, or instantly with the panic button (Ctrl+Alt+End or the tray menu).
-- **Start with Windows:** optional - starts in the tray when you sign in, already running as administrator, so there's no Windows prompt each time.
+- **No admin prompt every time:** turn on *Open without the admin prompt* (or *Start with Windows*, which starts it in the tray when you sign in) and Windows asks for admin only once.
 - **Customization:** accent colors, backgrounds (including OLED black), corner styles and interface size.
 - **Updates:** the app updates itself when a new version is released.
 - **Feedback:** report a bug, suggest an idea or ask for a game from inside the app (sidebar or tray menu). It fills in a GitHub issue with the details you choose to include - you review it before anything is sent.
@@ -31,7 +31,7 @@ Version 2 is a native app: one small ProjectOptM.exe that starts instantly and i
 
 1. Download **ProjectOptM.exe** from the [latest release](../../releases/latest).
 2. Put it anywhere (your Desktop is fine) and double-click it.
-3. Click **Yes** on the admin prompt. It needs admin to change priorities, pause services and read frame timing.
+3. Click **Yes** on the admin prompt. It needs admin to change priorities, pause services and read frame timing. To stop Windows asking every time, turn on **Settings → Open without the admin prompt**.
 
 If Windows shows "Windows protected your PC", click **More info → Run anyway**. This happens with any app that isn't code-signed yet, and only on the first run. Updates install from inside the app without the warning.
 

@@ -1,13 +1,21 @@
-// Start with Windows: a Task Scheduler task that starts Project OptM in the tray when you sign in,
-// with "run with highest privileges" - so it's already admin and Windows doesn't ask every time.
+// The admin task: a Task Scheduler task that runs Project OptM with "highest privileges".
+// Windows only asks for admin once, when you turn it on in Settings. After that:
+//  - "Open without the admin prompt": opening the app starts it through the task (no UAC prompt)
+//  - "Start with Windows": the same task also runs at sign-in (hidden in the tray)
 #pragma once
 #include <string>
 
 namespace autostart {
 
-bool Enabled();                                  // the task exists for this user
-std::wstring TaskCommand();                      // the exe the task starts ("" if none)
-bool Enable(const std::wstring& exe, std::string& error);   // create or update (needs admin - we are)
-bool Disable(std::string& error);
+struct State {
+    bool exists = false;        // the task is there (opening needs no prompt)
+    bool atSignIn = false;      // ...and it starts the app when you sign in
+    std::wstring exe;           // the exe it starts
+};
+
+State Query();                                                     // this Windows user's task
+bool Set(const std::wstring& exe, bool atSignIn, std::string& error);   // create or update (needs admin - we are)
+bool Remove(std::string& error);
+bool Run();                     // start it now (works without admin - that's the point)
 
 }  // namespace autostart

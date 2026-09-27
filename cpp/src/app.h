@@ -180,7 +180,9 @@ private:
     NOTIFYICONDATAW nid_ = {};
     std::string trayTip_;
     bool trayAdded_ = false, trayTipShown_ = false, hotkey_ = false, restart_ = false, restartHidden_ = false, shutdown_ = false;
-    bool startWithWindows_ = false; // Settings > Start with Windows (the Task Scheduler task exists)
+    bool noPrompt_ = false;         // Settings > Open without the admin prompt (the admin task exists)
+    bool startWithWindows_ = false; // Settings > Start with Windows (...and it runs at sign-in)
+    void SetAdminTask(bool noPrompt, bool atSignIn);
 
     // animation + tour
     std::map<std::string, float> anim_;
