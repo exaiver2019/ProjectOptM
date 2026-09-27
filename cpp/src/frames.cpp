@@ -1,4 +1,5 @@
 #include "frames.h"
+#include "util.h"
 #include <algorithm>
 #include <cmath>
 #include <evntrace.h>
@@ -70,7 +71,7 @@ bool FrameCapture::Start(const std::vector<DWORD>& pids) {
     {
         std::lock_guard<std::mutex> l(mu_);
         pids_ = std::set<DWORD>(pids.begin(), pids.end());
-        last_.clear(); counts_.clear(); top_ = { 0, 0 }; pending_.clear(); error_.clear();
+        last_.clear(); counts_.clear(); top_ = { 0, 0 }; pending_.clear(); error_.clear(); blocked_ = false;
     }
     buffer_.clear();
     LARGE_INTEGER f; QueryPerformanceFrequency(&f); qpcFreq_ = f.QuadPart;
@@ -86,7 +87,9 @@ bool FrameCapture::Start(const std::vector<DWORD>& pids) {
     }
     if (rc != ERROR_SUCCESS) {
         std::lock_guard<std::mutex> l(mu_);
-        error_ = rc == ERROR_ACCESS_DENIED ? "needs admin rights" : "couldn't start the trace (error " + std::to_string(rc) + ")";
+        if (rc != ERROR_ACCESS_DENIED) error_ = "couldn't start the trace (error " + std::to_string(rc) + ")";
+        else if (!util::IsElevated()) error_ = "needs admin rights";
+        else { error_ = "Windows refused it - usually the game's anti-cheat blocking frame capture"; blocked_ = true; }
         return false;
     }
     session_ = session;

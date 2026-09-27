@@ -24,6 +24,7 @@ std::wstring AppDataRoot();                             // %APPDATA%
 std::wstring LocalAppDataRoot();                        // %LOCALAPPDATA%
 std::wstring AppDataDir();                              // %APPDATA%\ProjectOptM
 std::wstring SelfPath();                                // this exe
+bool         IsElevated();                              // running as administrator
 std::wstring EnvVar(const wchar_t* name);
 std::string  RegString(HKEY root, const wchar_t* key, const wchar_t* value);
 bool         RegDword(HKEY root, const wchar_t* key, const wchar_t* value, DWORD& out);

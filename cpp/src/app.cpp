@@ -430,6 +430,7 @@ void App::SessionStarted(const GameProfile& p) {
     for (auto& e : p.exes) for (DWORD pid : procs_.Find(e)) pids.push_back(pid);
     if (selfTest_) pids.push_back(GetCurrentProcessId());
     if (frames_.Start(pids)) Log("  FPS capture started");
+    else if (frames_.Blocked()) Log("  No FPS for " + p.name + ": Windows refused frame capture (usually the game's anti-cheat) - optimizing still works");
     else Log("  FPS capture couldn't start: " + frames_.LastError());
 }
 
@@ -1223,7 +1224,9 @@ void App::PerfCard() {
     else if (!opt_.Active() && !frames_.Running()) msg = "Start a game to see live FPS and frametimes";
     else if (buf.size() < 10) {
         std::string err = frames_.LastError();
-        msg = !frames_.Running() && !err.empty() ? "FPS capture stopped: " + err : "Waiting for frames...";
+        std::string game = opt_.Active() ? opt_.Active()->name : "this game";
+        if (frames_.Blocked()) msg = "No FPS for " + game + " - its anti-cheat blocks frame capture. It's still being optimized.";
+        else msg = !frames_.Running() && !err.empty() ? "FPS capture stopped: " + err : "Waiting for frames...";
     }
     if (!msg.empty()) {
         ImVec2 ts = ImGui::CalcTextSize(msg.c_str());
@@ -1507,7 +1510,9 @@ void App::HistoryPopup() {
     ImGui::PopFont();
     ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize("Close").x - ImGui::GetStyle().FramePadding.x * 2);
     if (ImGui::Button("Close") || ImGui::IsKeyPressed(ImGuiKey_Escape)) { historyGame_.clear(); ImGui::CloseCurrentPopup(); }
-    ImGui::TextColored(kSub, "%zu sessions   |   %s played   |   best average %.0f FPS", rows.size(), util::FormatHours(total).c_str(), best);
+    std::string head = Plural(rows.size(), "session") + "   |   " + util::FormatHours(total) + " played";
+    if (best > 0) head += "   |   best average " + std::to_string((int)std::lround(best)) + " FPS";
+    ImGui::TextColored(kSub, "%s", head.c_str());
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
     // FPS trend: average bars with the 1% low marked, last 30 sessions that had FPS

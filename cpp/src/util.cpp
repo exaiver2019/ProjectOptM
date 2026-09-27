@@ -199,6 +199,16 @@ void OpenAsUser(const std::wstring& target) {
     ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
 }
 
+bool IsElevated() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION e = {};
+    DWORD size = 0;
+    bool ok = GetTokenInformation(token, TokenElevation, &e, sizeof(e), &size) && e.TokenIsElevated;
+    CloseHandle(token);
+    return ok;
+}
+
 std::string UrlEncode(const std::string& s) {
     static const char* hex = "0123456789ABCDEF";
     std::string o;

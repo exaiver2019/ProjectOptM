@@ -19,6 +19,7 @@ public:
     void Stop();
     bool Running() const { return running_; }
     std::string LastError() const;
+    bool Blocked() const { return blocked_; }       // refused although we're admin (anti-cheat, usually)
 
     // Main thread, every loop: moves new frames into the rolling buffer and session stats.
     void Pump();
@@ -32,7 +33,7 @@ public:
 private:
     void Consume();
 
-    std::atomic<bool> running_{ false };
+    std::atomic<bool> running_{ false }, blocked_{ false };
     uint64_t session_ = 0, trace_ = 0;        // TRACEHANDLEs
     std::thread thread_;
     int64_t qpcFreq_ = 1;
