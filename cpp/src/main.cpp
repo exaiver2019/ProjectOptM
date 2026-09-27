@@ -152,6 +152,7 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     std::wstring screenshot;
     int shotDelay = 2500, exitAfter = 0;   // exitAfter 0 = right after the screenshot
+    bool tray = wcsstr(GetCommandLineW(), L"--tray") != nullptr;   // Start with Windows: start hidden in the tray
     int argc = 0;
     if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
         for (int i = 1; i + 1 < argc; i++) {
@@ -174,7 +175,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     SetEnvironmentVariableW(L"OPTM_RESTART", nullptr);
     DWORD got = mutex ? WaitForSingleObject(mutex, waitMs) : WAIT_FAILED;
     if (got != WAIT_OBJECT_0 && got != WAIT_ABANDONED) {
-        if (screenshot.empty())
+        if (screenshot.empty() && !tray)
             MessageBoxW(nullptr, L"Project OptM is already running. Look for its icon in the system tray.", L"Project OptM", MB_ICONINFORMATION);
         return 0;
     }
@@ -236,8 +237,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     SIZE ws = app.WindowSize(work);
     SetWindowPos(hwnd, nullptr, work.left + (work.right - work.left - ws.cx) / 2, work.top + (work.bottom - work.top - ws.cy) / 2,
                  ws.cx, ws.cy, SWP_NOZORDER | SWP_NOACTIVATE);
-    ShowWindow(hwnd, screenshot.empty() ? SW_SHOWDEFAULT : SW_SHOWNOACTIVATE);
-    UpdateWindow(hwnd);
+    if (!tray || !screenshot.empty()) {
+        ShowWindow(hwnd, screenshot.empty() ? SW_SHOWDEFAULT : SW_SHOWNOACTIVATE);
+        UpdateWindow(hwnd);
+    }
 
     // Render only when something happens (plus a slow 5 fps tick), so the app idles near 0% CPU.
     // The optimizer keeps ticking while the window is hidden in the tray.
@@ -289,7 +292,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
 
     app.Shutdown();   // every priority, service and power plan back to how it was
-    bool restart = app.WantsRestart();
+    bool restart = app.WantsRestart(), restartHidden = app.RestartHidden();
     g_app = nullptr;
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -303,7 +306,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         SetEnvironmentVariableW(L"OPTM_RESTART", L"1");
         STARTUPINFOW si = { sizeof(si) };
         PROCESS_INFORMATION pi;
-        std::wstring cmd = L"\"" + self + L"\"";
+        std::wstring cmd = L"\"" + self + L"\"" + (restartHidden ? L" --tray" : L"");
         if (CreateProcessW(self.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);

@@ -119,6 +119,15 @@ applies at launch: launch priority (IFEO), fullscreen optimizations and the dedi
 your own previous GPU preference is recorded (`GpuManaged` in settings.json) and put back. They're set
 again when the app starts. Restarting into a new build doesn't revert them.
 
+## Start with Windows
+
+Settings > **Start with Windows** creates a Task Scheduler task, "Project OptM (<user>)": at sign-in (10 s
+delay) it runs the exe with `--tray` and *Run with highest privileges*, so the app starts hidden in the tray
+already elevated - no UAC prompt. Normal priority, no time limit, runs on battery. Turning it off deletes
+the task. If the exe moves, the next start points the task at the new path. Test copies (`--data-dir`) never
+touch the task. A self-restart after an update comes back in the tray if the window was hidden.
+(src/autostart.*)
+
 ## Feedback
 
 **Send feedback** (bottom of the sidebar, or the tray menu) opens a form: type (Bug / Idea / Game

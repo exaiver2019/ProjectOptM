@@ -12,5 +12,5 @@ done
 (cd res && x86_64-w64-mingw32-windres --preprocessor=cpp resource.rc -O coff -o ../build/obj/resource.o)
 $CXX -o build/ProjectOptM.exe build/obj/*.o -municode -mwindows -static -s \
      -ld3d11 -ldxgi -ldwmapi -lshell32 -ladvapi32 -luser32 -lgdi32 -limm32 -ld3dcompiler \
-     -lcomdlg32 -lpowrprof -lwinhttp -lbcrypt -lole32 -lwindowscodecs -lversion
+     -lcomdlg32 -lpowrprof -lwinhttp -lbcrypt -lole32 -loleaut32 -ltaskschd -lwindowscodecs -lversion
 echo "built build/ProjectOptM.exe"

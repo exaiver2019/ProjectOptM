@@ -1,4 +1,5 @@
 #include "app.h"
+#include "autostart.h"
 #include "imgui.h"
 #include "json.h"
 #include "tweaks.h"
@@ -136,6 +137,14 @@ void App::Init(HWND hwnd, float dpiScale) {
     opt_.RecoverLastRun();
     opt_.SyncPerGameSettings();
     opt_.ReapplyAtStart();   // put back what the last exit removed (launch priority: SyncLaunchPriority below)
+    if (util::EnvVar(L"OPTM_DATA_DIR").empty()) {   // (test copies never touch the real startup task)
+        startWithWindows_ = autostart::Enabled();
+        // the exe moved (or this is a new copy): keep the task pointing at the one you use
+        if (startWithWindows_ && _wcsicmp(autostart::TaskCommand().c_str(), selfPath_.c_str()) != 0) {
+            std::string err;
+            if (autostart::Enable(selfPath_, err)) Log("Start with Windows now starts this copy: " + util::Narrow(selfPath_));
+        }
+    }
     detector_.Load();
     if (data_.profilesCreated) Log("Created your game profiles file with the default games");
     if (imported) Log("Imported " + std::to_string(imported) + " past sessions into your play history");
@@ -329,6 +338,7 @@ void App::Update() {
     for (auto& l : updater_.TakeLog()) Log(l);
     if (updater_.GetState() == Updater::Ready && !restart_) {
         restart_ = true;
+        restartHidden_ = !IsWindowVisible(hwnd_);   // come back in the tray if that's where we were
         DestroyWindow(hwnd_);   // main.cpp restarts us after everything is restored
         return;
     }
@@ -342,6 +352,7 @@ void App::Update() {
         else if (t != 0 && t != selfStamp_ && !opt_.Active() && !restart_ && updater_.GetState() != Updater::Downloading) {
             Log("A new build of Project OptM was installed - restarting into it");
             restart_ = true;
+            restartHidden_ = !IsWindowVisible(hwnd_);   // come back in the tray if that's where we were
             DestroyWindow(hwnd_);   // main.cpp puts everything back, then starts the new exe
             return;
         }
@@ -2248,6 +2259,24 @@ void App::PageSettings() {
         ImGui::SetTooltip("ON: when you exit Project OptM, your PC goes back exactly to how it was - including the per-game\n"
                           "launch priority, GPU preference and fullscreen optimization settings. They're set again when it starts.\n"
                           "OFF: those three stay set, so they work even while Project OptM isn't running.");
+    ImGui::SameLine();
+    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
+    ImGui::BeginDisabled(testCopy);
+    if (toggle(startWithWindows_ ? "Start with Windows: ON" : "Start with Windows: OFF", startWithWindows_)) {
+        std::string err;
+        bool on = !startWithWindows_;
+        if (on ? autostart::Enable(selfPath_, err) : autostart::Disable(err)) {
+            startWithWindows_ = on;
+            Log(on ? "Start with Windows on - Project OptM starts in the tray when you sign in, as admin, without the Windows prompt"
+                   : "Start with Windows off");
+        } else Log(std::string("Couldn't turn Start with Windows ") + (on ? "on" : "off") + ": " + err);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", testCopy ? "Not available in a test copy (--data-dir)"
+                                         : "Starts Project OptM in the tray when you sign in to Windows - already running as\n"
+                                           "administrator, so there's no \"allow this app to make changes?\" prompt.\n"
+                                           "Uses a Task Scheduler task; turning this off removes it.");
     ImGui::PushTextWrapPos(0);
     ImGui::TextColored(kSub, "Everything Project OptM changes is put back when the game closes, when you exit, or instantly with %s.%s",
                        hotkey_ ? "Ctrl+Alt+End" : "the tray menu",

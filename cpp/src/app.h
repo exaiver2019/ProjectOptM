@@ -27,6 +27,7 @@ public:
     void Shutdown();               // puts everything back before exit
     bool Busy() const;             // true while something animates / is being dragged
     bool WantsRestart() const { return restart_; }
+    bool RestartHidden() const { return restartHidden_; }   // restart into the tray
 
     // interface size = Windows' display scaling x the user's size setting
     float Scale() const { return s_; }
@@ -178,7 +179,8 @@ private:
     // tray + lifetime
     NOTIFYICONDATAW nid_ = {};
     std::string trayTip_;
-    bool trayAdded_ = false, trayTipShown_ = false, hotkey_ = false, restart_ = false, shutdown_ = false;
+    bool trayAdded_ = false, trayTipShown_ = false, hotkey_ = false, restart_ = false, restartHidden_ = false, shutdown_ = false;
+    bool startWithWindows_ = false; // Settings > Start with Windows (the Task Scheduler task exists)
 
     // animation + tour
     std::map<std::string, float> anim_;

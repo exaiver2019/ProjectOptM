@@ -8,13 +8,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(IMGUI third_party/imgui)
 add_executable(ProjectOptM WIN32
     src/main.cpp src/app.cpp src/system_info.cpp src/data.cpp src/json.cpp src/util.cpp
-    src/processes.cpp src/tweaks.cpp src/optimizer.cpp src/checks.cpp src/frames.cpp src/updater.cpp src/tweakset.cpp src/detect.cpp
+    src/processes.cpp src/tweaks.cpp src/optimizer.cpp src/checks.cpp src/frames.cpp src/updater.cpp src/tweakset.cpp src/detect.cpp src/autostart.cpp
     ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/imgui_impl_win32.cpp ${IMGUI}/imgui_impl_dx11.cpp
     res/resource.rc)
 target_include_directories(ProjectOptM PRIVATE src ${IMGUI})
 target_compile_definitions(ProjectOptM PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00)
-target_link_libraries(ProjectOptM PRIVATE d3d11 dxgi dwmapi shell32 advapi32 user32 comdlg32 powrprof winhttp bcrypt ole32 windowscodecs version)
+target_link_libraries(ProjectOptM PRIVATE d3d11 dxgi dwmapi shell32 advapi32 user32 comdlg32 powrprof winhttp bcrypt ole32 oleaut32 taskschd windowscodecs version)
 
 if(MSVC)
     # single exe with no Visual C++ runtime to install; our manifest is in resource.rc
