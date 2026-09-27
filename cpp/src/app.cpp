@@ -96,7 +96,7 @@ void App::Init(HWND hwnd, float dpiScale) {
     for (int i = 0; i < PageCount; i++)
         if (cmd.find(std::string("--page ") + pages[i]) != std::string::npos) page_ = (Page)i;
 
-    Log("Project OptM v" OPTM_VERSION " starting");
+    Log("Project OptM v" OPTM_VERSION_LABEL " starting");
     sys_.Detect();
     data_.Load();
     int imported = data_.ImportOtherHistory();
@@ -1285,6 +1285,13 @@ void App::Sidebar(float height) {
     ImGui::SetWindowFontScale(1.0f);
     ImGui::PopFont();
     ImGui::TextColored(kDim, "v" OPTM_VERSION);
+    if (OPTM_CHANNEL[0]) {   // a test build: say so, right under the name
+        ImGui::SameLine(0, 6 * s_);
+        ImGui::SetWindowFontScale(0.8f);
+        ImGui::TextColored(kAmber, "EXPERIMENTAL");
+        ImGui::SetWindowFontScale(1.0f);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A test build of Project OptM " OPTM_VERSION " - not a public release");
+    }
     ImGui::EndGroup();
     ImGui::Dummy(ImVec2(0, 14 * s_));
 
@@ -2164,7 +2171,7 @@ std::string App::FeedbackBody() const {
     std::string b;
     std::string details = util::Trim(fbDetails_);
     b += details.empty() ? "_(no details)_" : details;
-    b += "\n\n---\n**Project OptM** " OPTM_VERSION;
+    b += "\n\n---\n**Project OptM** " OPTM_VERSION_LABEL;
     if (!fbGame_.empty()) b += "  |  **Game:** " + fbGame_;
     b += "\n";
     auto section = [&](const std::string& title, const std::string& text) {
@@ -2660,7 +2667,7 @@ void App::PageAbout() {
     centerAt(ImGui::CalcTextSize("Project OptM").x);
     ImGui::TextUnformatted("Project OptM");
     ImGui::PopFont();
-    const char* ver = "v" OPTM_VERSION "   -   Windows 10/11 x64";
+    const char* ver = "v" OPTM_VERSION_LABEL "   -   Windows 10/11 x64";
     centerAt(ImGui::CalcTextSize(ver).x);
     ImGui::TextColored(kDim, "%s", ver);
     ImGui::Dummy(ImVec2(0, 8 * s_));
@@ -2937,7 +2944,7 @@ void App::PageSettings() {
     Label("UPDATES AND HELP");
     ImGui::Dummy(ImVec2(0, 2 * s_));
     std::string st = !updater_.Enabled() ? "Updates are off (no GitHub repo set in version.h)."
-                   : !updater_.Status().empty() ? updater_.Status() : "Project OptM v" OPTM_VERSION " - updates come from github.com/" OPTM_UPDATE_REPO;
+                   : !updater_.Status().empty() ? updater_.Status() : "Project OptM v" OPTM_VERSION_LABEL " - updates come from github.com/" OPTM_UPDATE_REPO;
     ImGui::TextColored(kSub, "%s", st.c_str());
     ImGui::BeginDisabled(!updater_.Enabled());
     if (ImGui::Button("Check for updates")) { lastUpdateCheck_ = Ms(); updater_.Check(true); }
