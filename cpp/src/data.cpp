@@ -479,6 +479,11 @@ void AppData::LoadConfig() {
     ifeoManaged = j["Ifeo"].AsStrings();
     gpuManaged = j["GpuManaged"].AsStrings();
     revertOnExit = j["RevertOnExit"].AsBool(true);
+    const Json& ov = j["Overlay"];
+    overlayOn = ov["On"].AsBool(false);
+    overlayCorner = ov["Corner"].type == Json::Number ? std::clamp((int)ov["Corner"].num, 0, 3) : 0;
+    overlayGraph = ov["Graph"].AsBool(true);
+    overlayAntiCheat = ov["AntiCheat"].AsBool(false);
     restorePlan = j["RestorePlan"].AsString();
     pausedServices = j["PausedSvcs"].AsStrings();
     optimizerImport = j["OptimizerImport"].AsString();
@@ -501,6 +506,12 @@ void AppData::SaveConfig() const {
     j.obj["Ifeo"] = Json::StrList(ifeoManaged);
     j.obj["GpuManaged"] = Json::StrList(gpuManaged);
     j.obj["RevertOnExit"] = Json::Boolean(revertOnExit);
+    Json ov = Json::Obj();
+    ov.obj["On"] = Json::Boolean(overlayOn);
+    ov.obj["Corner"] = Json::Num(overlayCorner);
+    ov.obj["Graph"] = Json::Boolean(overlayGraph);
+    ov.obj["AntiCheat"] = Json::Boolean(overlayAntiCheat);
+    j.obj["Overlay"] = ov;
     j.obj["RestorePlan"] = restorePlan.empty() ? Json() : Json::Str(restorePlan);
     Json t = Json::Obj();
     t.obj["Accent"] = Json::Str(theme.accent);

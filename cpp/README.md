@@ -119,6 +119,17 @@ applies at launch: launch priority (IFEO), fullscreen optimizations and the dedi
 your own previous GPU preference is recorded (`GpuManaged` in settings.json) and put back. They're set
 again when the app starts. Restarting into a new build doesn't revert them.
 
+## In-game overlay
+
+Settings > **In-game overlay** (or Overlay on the Home page, or Ctrl+Alt+O) shows FPS, 1% low, frametime
+and a mini frametime graph (last 4 s, spikes in amber) in a corner of the game's monitor, 4 times a second.
+It's a small GDI window - `WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
+WS_EX_TOOLWINDOW` - re-asserted topmost every second, so it never takes focus or clicks and isn't in Alt+Tab.
+Nothing is injected into the game (unlike RTSS/Afterburner, which hook Present - anti-cheat risk). The
+trade-off: it only shows over windowed, borderless and flip-model "fullscreen" games, not true exclusive
+fullscreen. It shows only while the game window is in front, hides when FPS capture is blocked, and by
+default stays off over anti-cheat games (Settings > Anti-cheat games). (src/overlay.*)
+
 ## Start with Windows
 
 Settings > **Start with Windows** creates a Task Scheduler task, "Project OptM (<user>)": at sign-in (10 s
@@ -180,6 +191,7 @@ Handy for testing without touching your real setup:
 | `--zoom-after <percent>` | change the interface size 1 s after start (checks live resizing) |
 | `--history <game>` | open that game's history window |
 | `--game-settings <game>` (`--save-settings`) | open that game's settings (and save them at once - a profiles.ini round-trip check) |
+| `--overlay-demo` (with `--fps-self`) | show the in-game overlay over the app's own window (if it's on in settings) |
 | `--feedback` (`--feedback-preview`) | open the feedback form (with its preview) |
 | `OPTM_FEEDBACK_TEST=<title>` | build a feedback link at start and log it instead of opening it (`--feedback-long` tests the clipboard path) |
 | `OPTM_UPDATE_AS=<version>` | pretend to be an older version when checking for updates |

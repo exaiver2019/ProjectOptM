@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(IMGUI third_party/imgui)
 add_executable(ProjectOptM WIN32
     src/main.cpp src/app.cpp src/system_info.cpp src/data.cpp src/json.cpp src/util.cpp
-    src/processes.cpp src/tweaks.cpp src/optimizer.cpp src/checks.cpp src/frames.cpp src/updater.cpp src/tweakset.cpp src/detect.cpp src/autostart.cpp
+    src/processes.cpp src/tweaks.cpp src/optimizer.cpp src/checks.cpp src/frames.cpp src/updater.cpp src/tweakset.cpp src/detect.cpp src/autostart.cpp src/overlay.cpp
     ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/imgui_impl_win32.cpp ${IMGUI}/imgui_impl_dx11.cpp
     res/resource.rc)

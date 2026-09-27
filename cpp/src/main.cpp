@@ -115,6 +115,7 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_HOTKEY:
             if (wp == kHotkeyPanic && g_app) g_app->OnHotkey();
+            if (wp == kHotkeyOverlay && g_app) g_app->ToggleOverlay();
             return 0;
         case WM_ACTIVATE:
             if (LOWORD(wp) != WA_INACTIVE && g_app) g_app->OnActivate();

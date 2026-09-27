@@ -130,6 +130,9 @@ void App::Init(HWND hwnd, float dpiScale) {
         Log(hotkey_ ? "Panic hotkey ready: Ctrl+Alt+End undoes everything instantly"
                     : "Panic hotkey Ctrl+Alt+End is used by another app - use the tray menu instead");
     }
+    overlay_.Create(GetModuleHandleW(nullptr));
+    overlayHotkey_ = RegisterHotKey(hwnd_, kHotkeyOverlay, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O') != 0;
+    overlayDemo_ = cmd.find("--overlay-demo") != std::string::npos;
     RefreshChecks();
     int warns = (int)std::count_if(checks_.begin(), checks_.end(), [](const Check& c) { return c.state == Check::Warn; });
     if (warns) Log(std::to_string(warns) + " system check(s) need attention - click the outlined chips on the System page to fix");
@@ -343,6 +346,7 @@ void App::Update() {
         return;
     }
     frames_.Pump();
+    UpdateOverlay();
     uint64_t now = Ms();
     // A new build was put in place of our exe (Build.bat): restart into it once no game is running
     if (now - lastSelfCheck_ >= 5000) {
@@ -477,6 +481,8 @@ void App::Shutdown() {
     if (shutdown_) return;
     shutdown_ = true;
     if (hotkey_) UnregisterHotKey(hwnd_, kHotkeyPanic);
+    if (overlayHotkey_) UnregisterHotKey(hwnd_, kHotkeyOverlay);
+    overlay_.Destroy();
     opt_.EndSession();
     // fully closing (not restarting into a new build): the per-game Windows settings go back too
     if (data_.revertOnExit && !restart_) opt_.RevertOnExit();
@@ -545,6 +551,68 @@ void App::OnCommand(WPARAM id) {
 }
 
 void App::OnHotkey() { Panic(); }
+
+void App::ToggleOverlay() {
+    data_.overlayOn = !data_.overlayOn;
+    data_.SaveConfig();
+    Log(data_.overlayOn ? "In-game overlay on (Ctrl+Alt+O hides it)" : "In-game overlay off (Ctrl+Alt+O shows it)");
+}
+
+// The game's main window: its biggest visible top-level window
+HWND App::GameWindow() {
+    uint64_t now = Ms();
+    if (gameWnd_ && IsWindow(gameWnd_) && now - lastGameWnd_ < 2000) return gameWnd_;
+    lastGameWnd_ = now;
+    gameWnd_ = nullptr;
+    const GameProfile* g = opt_.Active();
+    if (!g) return nullptr;
+    struct Find { std::set<DWORD> pids; HWND best = nullptr; long long area = 0; } f;
+    for (auto& e : g->exes) for (DWORD pid : procs_.Find(e)) f.pids.insert(pid);
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        auto* f = (Find*)lp;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        if (!f->pids.count(pid) || !IsWindowVisible(h) || GetWindow(h, GW_OWNER)) return TRUE;
+        RECT r; GetWindowRect(h, &r);
+        long long a = (long long)(r.right - r.left) * (r.bottom - r.top);
+        if (a > f->area) { f->area = a; f->best = h; }
+        return TRUE;
+    }, (LPARAM)&f);
+    gameWnd_ = f.best;
+    return gameWnd_;
+}
+
+void App::UpdateOverlay() {
+    uint64_t now = Ms();
+    if (now - lastOverlay_ < 250) return;   // 4 updates a second, like Afterburner's
+    lastOverlay_ = now;
+    HWND game = nullptr;
+    bool want = false;
+    if (overlayDemo_) { game = hwnd_; want = data_.overlayOn; }
+    else if (const GameProfile* g = opt_.Active()) {
+        want = data_.overlayOn && data_.fpsOn && !frames_.Blocked() && (!g->antiCheat || data_.overlayAntiCheat);
+        if (want) {
+            game = GameWindow();
+            // only while you're in the game - alt-tab away and it goes
+            DWORD fg = 0, gp = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &fg);
+            if (game) GetWindowThreadProcessId(game, &gp);
+            want = game && !IsIconic(game) && fg == gp;
+        }
+    }
+    if (!want) { overlay_.Hide(); return; }
+    const auto& buf = frames_.Buffer();
+    frames::Live st = frames::Stats(buf);
+    OverlayContent c;
+    c.hasFps = buf.size() >= 10;
+    c.fps = st.fps;
+    c.low1 = st.low1;
+    c.frametime = st.frametime;
+    c.showGraph = data_.overlayGraph;
+    if (c.showGraph) c.graph = frames::Columns(buf, 4000, 64);
+    c.accent = RGB((int)(g_accent.x * 255), (int)(g_accent.y * 255), (int)(g_accent.z * 255));
+    overlay_.Show(game, data_.overlayCorner, Zoom(), c);
+}
 
 void App::OnActivate() { if (Ms() - lastChecks_ >= 10000) RefreshChecks(); }
 
@@ -1213,8 +1281,14 @@ void App::PerfCard() {
     if (live) ImGui::TextColored(kSub, "Frametime   %.1f ms", st.frametime); else ImGui::TextColored(kSub, "Frametime   --");
     ImGui::EndGroup();
     const char* tl = data_.fpsOn ? "Graph: ON" : "Graph: OFF";
-    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(tl).x - ImGui::GetStyle().FramePadding.x * 2);
+    const char* ol = data_.overlayOn ? "Overlay: ON" : "Overlay: OFF";
+    float pad = ImGui::GetStyle().FramePadding.x * 2;
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(tl).x - ImGui::CalcTextSize(ol).x - pad * 2 - 8 * s_);
     ImGui::SetCursorPosY(top);
+    if (ImGui::Button(ol)) ToggleOverlay();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Shows FPS, 1%% low and frametime in a corner of your game (Ctrl+Alt+O).\nMore options in Settings > In-game overlay.");
+    ImGui::SameLine(0, 8 * s_);
     if (ImGui::Button(tl)) {
         data_.fpsOn = !data_.fpsOn;
         data_.SaveConfig();
@@ -2282,6 +2356,40 @@ void App::PageSettings() {
                        hotkey_ ? "Ctrl+Alt+End" : "the tray menu",
                        data_.revertOnExit ? "" : " (Launch priority, GPU preference and fullscreen optimizations stay set after you exit.)");
     ImGui::TextColored(kDim, "Game checks run every %d s. Timing, power plan, background apps and more are set in the [Settings] block of your profiles file.", data_.settings.poll);
+    ImGui::PopTextWrapPos();
+    EndCard();
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+
+    BeginCard("overlay");
+    Label("IN-GAME OVERLAY");
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    if (toggle(data_.overlayOn ? "Overlay: ON" : "Overlay: OFF", data_.overlayOn)) ToggleOverlay();
+    ImGui::SameLine();
+    if (toggle(data_.overlayGraph ? "Frametime graph: ON" : "Frametime graph: OFF", data_.overlayGraph)) {
+        data_.overlayGraph = !data_.overlayGraph;
+        data_.SaveConfig();
+    }
+    ImGui::SameLine();
+    if (toggle(data_.overlayAntiCheat ? "Anti-cheat games: ON" : "Anti-cheat games: OFF", data_.overlayAntiCheat)) {
+        data_.overlayAntiCheat = !data_.overlayAntiCheat;
+        data_.SaveConfig();
+        Log(data_.overlayAntiCheat ? "The overlay now also shows over anti-cheat games" : "The overlay is hidden over anti-cheat games");
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The overlay is a separate window - nothing is loaded into the game - but some anti-cheats\n"
+                          "watch for windows drawn over their game. Off (the default) keeps it hidden in those games.");
+    ImGui::Dummy(ImVec2(0, 2 * s_));
+    ImGui::TextColored(kSub, "Corner");
+    const char* corners[] = { "Top left", "Top right", "Bottom left", "Bottom right" };
+    for (int i = 0; i < 4; i++) {
+        if (i) ImGui::SameLine();
+        if (toggle(corners[i], data_.overlayCorner == i)) { data_.overlayCorner = i; data_.SaveConfig(); }
+    }
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(kDim, "FPS, 1%% low and frametime in a corner of the game, while you're in it. %s shows or hides it. "
+                             "It's a separate click-through window (nothing is loaded into the game), so it shows over windowed, "
+                             "borderless and most modern fullscreen games, but not old exclusive fullscreen.",
+                       overlayHotkey_ ? "Ctrl+Alt+O" : "The switch above (Ctrl+Alt+O is taken by another app)");
     ImGui::PopTextWrapPos();
     EndCard();
     ImGui::Dummy(ImVec2(0, 6 * s_));

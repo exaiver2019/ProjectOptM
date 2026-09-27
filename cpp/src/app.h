@@ -12,12 +12,14 @@
 #include "frames.h"
 #include "imgui.h"
 #include "optimizer.h"
+#include "overlay.h"
 #include "processes.h"
 #include "system_info.h"
 #include "updater.h"
 
 constexpr UINT WM_APP_TRAY = WM_APP + 1;
 constexpr int kHotkeyPanic = 0x4F50;
+constexpr int kHotkeyOverlay = 0x4F51;   // Ctrl+Alt+O
 
 class App {
 public:
@@ -40,6 +42,7 @@ public:
     void OnTray(LPARAM lp);
     void OnCommand(WPARAM id);
     void OnHotkey();
+    void ToggleOverlay();          // Ctrl+Alt+O
     void OnActivate();
     void OnMinimize();
     void OnTaskbarCreated();
@@ -64,6 +67,8 @@ private:
     void SessionStarted(const GameProfile& p);
     void SessionEnded(const GameProfile& p, double minutes, bool gameClosed);
     void UpdateTray();
+    void UpdateOverlay();          // show / refresh / hide the in-game overlay
+    HWND GameWindow();             // the running game's main window (cached)
     void Balloon(const char* text, DWORD icon = NIIF_INFO);
 
     // actions
@@ -175,6 +180,13 @@ private:
     std::string fbGame_;           // "" = not about a game
     bool fbSpecs_ = true, fbLog_ = true, fbGameSettings_ = true, fbFps_ = true, fbPreview_ = false;
     std::string fbStatus_;
+
+    // in-game overlay
+    Overlay overlay_;
+    HWND gameWnd_ = nullptr;
+    uint64_t lastOverlay_ = 0, lastGameWnd_ = 0;
+    bool overlayHotkey_ = false;
+    bool overlayDemo_ = false;     // --overlay-demo: show it over our own window (developer check)
 
     // tray + lifetime
     NOTIFYICONDATAW nid_ = {};
