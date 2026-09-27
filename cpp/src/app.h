@@ -69,6 +69,9 @@ private:
     void SessionEnded(const GameProfile& p, double minutes, bool gameClosed);
     void UpdateTray();
     void UpdateOverlay();          // show / refresh / hide the in-game overlay
+    OverlayContent OverlayNow();   // what it shows right now
+    float OverlayScale() const;
+    void OverlayPositioner();      // the Overlay page's picture of your screen: drag the overlay into place
     HWND GameWindow();             // the running game's main window (cached)
     void Balloon(const char* text, DWORD icon = NIIF_INFO);
 
@@ -194,6 +197,7 @@ private:
     uint64_t lastOverlay_ = 0, lastGameWnd_ = 0;
     bool overlayHotkey_ = false;
     bool overlayDemo_ = false;     // --overlay-demo: show it over our own window (developer check)
+    ImVec2 overlayGrab_;           // where in the overlay the positioner drag started
 
     // tray + lifetime
     NOTIFYICONDATAW nid_ = {};

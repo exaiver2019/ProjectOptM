@@ -2,7 +2,7 @@
 // Nothing is loaded into the game, so it's safe with anti-cheat - but it only shows over windowed,
 // borderless and "fullscreen optimizations" games, not old exclusive fullscreen.
 // Drawn with per-pixel alpha (GDI+ into a layered window), so the background can be see-through
-// while the text stays solid.
+// while the text stays solid. Where it sits is chosen on the Overlay page (a picture of your screen).
 #pragma once
 #include <cstdint>
 #include <string>
@@ -33,26 +33,18 @@ public:
     void Hide();
     bool Visible() const { return visible_; }
 
-    // Move mode: the overlay can be dragged (double-click it when done)
-    void SetMoving(bool on);
-    bool Moving() const { return moving_; }
-    bool TakeMoved(double& fx, double& fy);   // dropped somewhere new since the last call
-    bool TakeDone();                          // double-clicked
+    // Size and placement, shared with the Overlay page's screen preview
+    static SIZE SizeFor(size_t stats, bool graph, float scale);
+    static int Margin(float scale);                                   // gap to the screen edge
+    static POINT Place(const RECT& screen, SIZE size, double fx, double fy, float scale);
 
 private:
-    static LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM wp, LPARAM lp);
     void Render(int x, int y);
-    SIZE Measure() const;
-    void Dropped();
 
     HWND hwnd_ = nullptr;
     ULONG_PTR gdiplus_ = 0;
-    bool visible_ = false, moving_ = false, placedOnce_ = false;
-    bool moved_ = false, done_ = false;
-    double movedX_ = 0, movedY_ = 0;
+    bool visible_ = false;
     OverlayContent c_;
     float s_ = 1;
-    POINT pos_ = {};
-    SIZE size_ = {};
     uint64_t lastTopmost_ = 0;
 };

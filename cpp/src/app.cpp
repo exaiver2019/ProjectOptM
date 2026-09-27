@@ -134,7 +134,6 @@ void App::Init(HWND hwnd, float dpiScale) {
     if (!sys_.gpus.empty()) sensors_.Start(sys_.gpus[0].luidLow, sys_.gpus[0].luidHigh, sys_.gpus[0].vramBytes);
     overlayHotkey_ = RegisterHotKey(hwnd_, kHotkeyOverlay, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O') != 0;
     overlayDemo_ = cmd.find("--overlay-demo") != std::string::npos;
-    if (cmd.find("--overlay-move") != std::string::npos) overlay_.SetMoving(true);   // developer check: move mode
     RefreshChecks();
     int warns = (int)std::count_if(checks_.begin(), checks_.end(), [](const Check& c) { return c.state == Check::Warn; });
     if (warns) Log(std::to_string(warns) + " system check(s) need attention - click the outlined chips on the System page to fix");
@@ -598,18 +597,9 @@ void App::UpdateOverlay() {
     uint64_t now = Ms();
     if (now - lastOverlay_ < 250) return;   // 4 updates a second, like Afterburner's
     lastOverlay_ = now;
-    // move mode: double-click ends it; wherever it was dropped is saved
-    if (overlay_.TakeDone()) { overlay_.SetMoving(false); Log("Overlay position saved"); }
-    double fx, fy;
-    if (overlay_.TakeMoved(fx, fy)) { data_.overlayX = fx; data_.overlayY = fy; data_.SaveConfig(); }
-
     HWND game = nullptr;
     bool want = false;
-    if (overlay_.Moving()) {   // shown for placing, over the game if one's running, else on this window's screen
-        game = opt_.Active() ? GameWindow() : nullptr;
-        if (!game) game = hwnd_;
-        want = true;
-    } else if (overlayDemo_) { game = hwnd_; want = data_.overlayOn; }
+    if (overlayDemo_) { game = hwnd_; want = data_.overlayOn; }
     else if (const GameProfile* g = opt_.Active()) {
         want = data_.overlayOn && data_.fpsOn && !frames_.Blocked() && (!g->antiCheat || data_.overlayAntiCheat);
         if (want) {
@@ -622,9 +612,16 @@ void App::UpdateOverlay() {
         }
     }
     auto has = [&](const char* id) { return util::Contains(data_.overlayItems, id); };
-    sensors_.SetActive(want && (has("gpu") || has("gputemp") || has("vram") || has("cpu") || has("ram")));
+    sensors_.SetActive((want || page_ == Overlay) && (has("gpu") || has("gputemp") || has("vram") || has("cpu") || has("ram")));
     if (!want) { overlay_.Hide(); return; }
+    overlay_.Show(game, data_.overlayX, data_.overlayY, OverlayScale(), OverlayNow());
+}
 
+float App::OverlayScale() const { return Zoom() * data_.overlaySize / 100.0f; }
+
+// What the overlay shows right now (also drawn small in the Overlay page's screen preview)
+OverlayContent App::OverlayNow() {
+    auto has = [&](const char* id) { return util::Contains(data_.overlayItems, id); };
     const auto& buf = frames_.Buffer();
     frames::Live st = frames::Stats(buf);
     Readings rd = sensors_.Get();
@@ -648,7 +645,7 @@ void App::UpdateOverlay() {
     if (c.showGraph) c.graph = frames::Columns(buf, 4000, 64);
     c.accent = RGB((int)(g_accent.x * 255), (int)(g_accent.y * 255), (int)(g_accent.z * 255));
     c.opacity = data_.overlayOpacity;
-    overlay_.Show(game, data_.overlayX, data_.overlayY, Zoom() * data_.overlaySize / 100.0f, c);
+    return c;
 }
 
 void App::OnActivate() { if (Ms() - lastChecks_ >= 10000) RefreshChecks(); }
@@ -2361,15 +2358,6 @@ void App::PageOverlay() {
     ImGui::Dummy(ImVec2(0, 4 * s_));
     if (toggle(data_.overlayOn ? "Overlay: ON" : "Overlay: OFF", data_.overlayOn)) ToggleOverlay();
     ImGui::SameLine();
-    bool moving = overlay_.Moving();
-    if (toggle(moving ? "Done moving" : "Move overlay", moving)) {
-        overlay_.SetMoving(!moving);
-        if (!moving) Log("Drag the overlay where you want it, then double-click it (or click Done moving)");
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Shows the overlay on your screen so you can drag it anywhere.\n"
-                          "Its spot is kept relative to the screen, so it lands in the same place in every game.");
-    ImGui::SameLine();
     if (toggle(data_.overlayAntiCheat ? "Anti-cheat games: ON" : "Anti-cheat games: OFF", data_.overlayAntiCheat)) {
         data_.overlayAntiCheat = !data_.overlayAntiCheat;
         data_.SaveConfig();
@@ -2412,20 +2400,6 @@ void App::PageOverlay() {
     ImGui::SliderInt("##ovsize", &data_.overlaySize, 70, 160, "%d%%");
     if (ImGui::IsItemDeactivatedAfterEdit()) data_.SaveConfig();
 
-    // where: drag it (Move overlay), or snap to a corner
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(kSub, "Snap to");
-    ImGui::SameLine(110 * s_);
-    const char* corners[] = { "Top left", "Top right", "Bottom left", "Bottom right" };
-    for (int i = 0; i < 4; i++) {
-        if (i) ImGui::SameLine();
-        double cx = (i == 1 || i == 3) ? 1 : 0, cy = i >= 2 ? 1 : 0;
-        if (toggle(corners[i], data_.overlayX == cx && data_.overlayY == cy)) {
-            data_.overlayX = cx; data_.overlayY = cy;
-            data_.SaveConfig();
-            if (overlay_.Moving()) { overlay_.SetMoving(false); overlay_.SetMoving(true); }   // jump there now
-        }
-    }
     ImGui::PushTextWrapPos(0);
     ImGui::TextColored(kDim, "Shown while you're in the game. %s shows or hides it. It's a separate click-through window "
                              "(nothing is loaded into the game), so it shows over windowed, borderless and most modern "
@@ -2435,7 +2409,96 @@ void App::PageOverlay() {
     EndCard();
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
+    // where it sits: a picture of your screen with the overlay in it - drag it, or snap to a corner
+    BeginCard("position");
+    Label("POSITION");
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    OverlayPositioner();
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kSub, "Snap to");
+    ImGui::SameLine(0, 16 * s_);
+    const char* corners[] = { "Top left", "Top right", "Bottom left", "Bottom right" };
+    for (int i = 0; i < 4; i++) {
+        if (i) ImGui::SameLine();
+        double cx = (i == 1 || i == 3) ? 1 : 0, cy = i >= 2 ? 1 : 0;
+        if (toggle(corners[i], data_.overlayX == cx && data_.overlayY == cy)) {
+            data_.overlayX = cx; data_.overlayY = cy;
+            data_.SaveConfig();
+        }
+    }
+    EndCard();
     ImGui::EndChild();
+}
+
+// A picture of your screen (its real shape) with the overlay drawn inside at its real size and spot.
+// Drag the overlay to move it, or click anywhere on the screen to put it there.
+void App::OverlayPositioner() {
+    HWND anchor = opt_.Active() ? GameWindow() : nullptr;   // the game's screen if one's running, else this window's
+    MONITORINFO mi = { sizeof(mi) };
+    GetMonitorInfoW(MonitorFromWindow(anchor ? anchor : hwnd_, MONITOR_DEFAULTTONEAREST), &mi);
+    const RECT& mon = mi.rcMonitor;
+    float monW = (float)std::max(1L, mon.right - mon.left), monH = (float)std::max(1L, mon.bottom - mon.top);
+    // (on another monitor Windows' own scaling may differ - close enough for placing it)
+
+    float boxW = std::min(ImGui::GetContentRegionAvail().x, 640 * s_), boxH = boxW * monH / monW;
+    float k = boxW / monW;   // screen pixels -> preview pixels
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("screen", ImVec2(boxW, boxH));
+    bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // the screen: dark, with a faint "game" gradient so the see-through setting shows
+    float r = 6 * s_;
+    dl->AddRectFilledMultiColor(p, ImVec2(p.x + boxW, p.y + boxH), U32(Hex("#1B2536")), U32(Hex("#2A2340")), U32(Hex("#1A1F2B")), U32(Hex("#11151D")));
+    dl->AddRect(p, ImVec2(p.x + boxW, p.y + boxH), U32(hovered || active ? Lighten(g_line, 0.25f) : g_line), r, 0, 2 * s_);
+    char res[48]; snprintf(res, sizeof(res), "%d x %d", (int)monW, (int)monH);
+    ImVec2 rs = ImGui::CalcTextSize(res);
+    dl->AddText(ImVec2(p.x + boxW - rs.x - 10 * s_, p.y + boxH - rs.y - 8 * s_), U32(Alpha(kSub, 0.6f)), res);
+
+    // the overlay, at its real size and spot
+    OverlayContent c = OverlayNow();
+    float sc = OverlayScale();
+    SIZE real = Overlay::SizeFor(c.stats.size(), c.showGraph, sc);
+    float ow = std::max(18 * s_, real.cx * k), oh = std::max(12 * s_, real.cy * k), m = Overlay::Margin(sc) * k;
+    float spanX = std::max(1.0f, boxW - ow - 2 * m), spanY = std::max(1.0f, boxH - oh - 2 * m);
+    ImVec2 o(p.x + m + (float)data_.overlayX * spanX, p.y + m + (float)data_.overlayY * spanY);
+    ImGuiIO& io = ImGui::GetIO();
+    bool overIt = io.MousePos.x >= o.x && io.MousePos.x <= o.x + ow && io.MousePos.y >= o.y && io.MousePos.y <= o.y + oh;
+    if (ImGui::IsItemActivated())   // grabbed it: keep that point under the mouse; clicked elsewhere: centre it there
+        overlayGrab_ = overIt ? ImVec2(io.MousePos.x - o.x, io.MousePos.y - o.y) : ImVec2(ow / 2, oh / 2);
+    if (active) {
+        data_.overlayX = std::clamp((io.MousePos.x - overlayGrab_.x - p.x - m) / spanX, 0.0f, 1.0f);
+        data_.overlayY = std::clamp((io.MousePos.y - overlayGrab_.y - p.y - m) / spanY, 0.0f, 1.0f);
+        o = ImVec2(p.x + m + (float)data_.overlayX * spanX, p.y + m + (float)data_.overlayY * spanY);
+    }
+    if (ImGui::IsItemDeactivated()) { data_.SaveConfig(); Log("Overlay position saved"); }
+    if (hovered || active) ImGui::SetMouseCursor(overIt || active ? ImGuiMouseCursor_ResizeAll : ImGuiMouseCursor_Hand);
+
+    // a small copy of the overlay: background at its opacity, the FPS in the accent color, the rest as lines
+    ImVec2 oe(o.x + ow, o.y + oh);
+    float orad = std::min(10 * sc * k, oh / 3);
+    if (c.opacity > 0) dl->AddRectFilled(o, oe, U32(ImVec4(0.047f, 0.051f, 0.067f, c.opacity / 100.0f)), orad);
+    dl->AddRect(o, oe, U32(Alpha(g_accent, active || overIt ? 1.0f : 0.7f)), orad, 0, (active ? 2.0f : 1.5f) * s_);
+    ImVec4 accent(GetRValue(c.accent) / 255.f, GetGValue(c.accent) / 255.f, GetBValue(c.accent) / 255.f, 1);
+    float pad = 12 * sc * k;
+    char fps[16]; snprintf(fps, sizeof(fps), "%s", c.hasFps ? std::to_string((int)std::lround(c.fps)).c_str() : "FPS");
+    float fsz = std::max(8 * s_, 26 * sc * k);
+    dl->AddText(fontBold_, fsz, ImVec2(o.x + pad, o.y + pad * 0.5f), U32(accent), fps);
+    float ly = o.y + (12 + 34) * sc * k, rowH = 19 * sc * k, colW = (ow - 2 * pad) / 2;
+    for (size_t i = 0; i < c.stats.size(); i++) {
+        float lx = o.x + pad + (i % 2) * colW, yy = ly + (i / 2) * rowH + rowH * 0.35f;
+        dl->AddRectFilled(ImVec2(lx, yy), ImVec2(lx + colW * 0.75f, yy + std::max(1.5f, rowH * 0.3f)), U32(Alpha(kSub, 0.8f)), 1);
+    }
+    if (c.showGraph) {
+        float gy = ly + ((c.stats.size() + 1) / 2) * rowH + 6 * sc * k, gh = 20 * sc * k;
+        dl->AddRectFilled(ImVec2(o.x + pad, gy), ImVec2(oe.x - pad, gy + gh), U32(Alpha(kGreen, 0.55f)), 1);
+    }
+
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + boxW);
+    ImGui::TextColored(kDim, "Your screen%s - drag the overlay where you want it, or click anywhere to move it there. "
+                             "It lands in the same spot in every game.", anchor ? " (the game's monitor)" : "");
+    ImGui::PopTextWrapPos();
 }
 // ------------------------------------------------------------ Settings
 void App::PageSettings() {

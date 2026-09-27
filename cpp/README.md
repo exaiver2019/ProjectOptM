@@ -128,7 +128,7 @@ saved as 0..1 across the screen, so it lands in the same place on any monitor. B
 (0 = outlined text only) and size 70-160%.
 It's a GDI+ layered window with per-pixel alpha (`UpdateLayeredWindow`) - `WS_EX_TOPMOST | WS_EX_LAYERED |
 WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`, re-asserted topmost every second, so it never takes
-focus or clicks (except while moving) and isn't in Alt+Tab.
+focus or clicks and isn't in Alt+Tab.
 Readings (src/sensors.*, a background thread, once a second, only while shown): GPU usage and VRAM from the
 `GPU Engine` / `GPU Adapter Memory` performance counters for the main GPU's LUID (Task Manager's method), GPU
 temperature from `D3DKMTQueryAdapterInfo(ADAPTERPERFDATA)` when the driver reports it, CPU from

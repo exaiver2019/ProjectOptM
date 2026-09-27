@@ -17,10 +17,17 @@ float Pad() { return 12; }
 float FpsRow() { return 34; }
 float StatRow() { return 19; }
 float GraphH() { return 20; }
-float HintRow() { return 18; }
 float Width() { return 196; }
 
 G::Color FromRef(COLORREF c, BYTE a = 255) { return G::Color(a, GetRValue(c), GetGValue(c), GetBValue(c)); }
+
+LRESULT CALLBACK Proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_NCHITTEST: return HTTRANSPARENT;   // clicks go to the game
+        case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
 
 // Text as an outlined path, so it stays readable on a see-through background. Returns its width.
 // (Font families are made per call: kept in statics they'd outlive GdiplusShutdown.)
@@ -60,15 +67,13 @@ bool Overlay::Create(HINSTANCE inst) {
     WNDCLASSEXW wc = { sizeof(wc) };
     wc.lpfnWndProc = Proc;
     wc.hInstance = inst;
-    wc.hCursor = LoadCursorW(nullptr, IDC_SIZEALL);
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = kClass;
     RegisterClassExW(&wc);
     // topmost, see-through for the mouse, never takes focus, not in the taskbar or Alt+Tab
     hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                             kClass, L"Project OptM overlay", WS_POPUP, 0, 0, 10, 10, nullptr, nullptr, inst, nullptr);
-    if (!hwnd_) return false;
-    SetWindowLongPtrW(hwnd_, GWLP_USERDATA, (LONG_PTR)this);
-    return true;
+    return hwnd_ != nullptr;
 }
 
 void Overlay::Destroy() {
@@ -77,35 +82,27 @@ void Overlay::Destroy() {
     visible_ = false;
 }
 
-SIZE Overlay::Measure() const {
-    float h = Pad() + FpsRow();
-    size_t rows = (c_.stats.size() + 1) / 2;
-    h += rows * StatRow();
-    if (c_.showGraph) h += 6 + GraphH();
-    if (moving_) h += 4 + HintRow();
-    h += Pad() - 2;
-    return { (LONG)std::lround(Width() * s_), (LONG)std::lround(h * s_) };
+SIZE Overlay::SizeFor(size_t stats, bool graph, float scale) {
+    float h = Pad() + FpsRow() + ((stats + 1) / 2) * StatRow() + (graph ? 6 + GraphH() : 0) + Pad() - 2;
+    return { (LONG)std::lround(Width() * scale), (LONG)std::lround(h * scale) };
+}
+
+int Overlay::Margin(float scale) { return (int)std::lround(14 * scale); }
+
+POINT Overlay::Place(const RECT& r, SIZE sz, double fx, double fy, float scale) {
+    int m = Margin(scale);
+    return { r.left + m + (int)std::lround(std::clamp(fx, 0.0, 1.0) * std::max(0L, r.right - r.left - sz.cx - 2 * m)),
+             r.top + m + (int)std::lround(std::clamp(fy, 0.0, 1.0) * std::max(0L, r.bottom - r.top - sz.cy - 2 * m)) };
 }
 
 void Overlay::Show(HWND anchor, double fx, double fy, float scale, const OverlayContent& content) {
     if (!hwnd_ || !anchor) return;
     c_ = content;
     s_ = scale;
-    SIZE sz = Measure();
-    int x = pos_.x, y = pos_.y;
-    if (moving_ && placedOnce_) {   // while you drag it, it stays where you put it (wherever the window is now)
-        RECT wr;
-        if (GetWindowRect(hwnd_, &wr)) { x = wr.left; y = wr.top; }
-    } else {
-        MONITORINFO mi = { sizeof(mi) };
-        GetMonitorInfoW(MonitorFromWindow(anchor, MONITOR_DEFAULTTONEAREST), &mi);
-        const RECT& r = mi.rcMonitor;   // the whole screen - games cover the taskbar
-        int m = (int)std::lround(14 * s_);
-        x = r.left + m + (int)std::lround(std::clamp(fx, 0.0, 1.0) * std::max(0L, r.right - r.left - sz.cx - 2 * m));
-        y = r.top + m + (int)std::lround(std::clamp(fy, 0.0, 1.0) * std::max(0L, r.bottom - r.top - sz.cy - 2 * m));
-        placedOnce_ = true;
-    }
-    Render(x, y);
+    MONITORINFO mi = { sizeof(mi) };
+    GetMonitorInfoW(MonitorFromWindow(anchor, MONITOR_DEFAULTTONEAREST), &mi);   // the whole screen - games cover the taskbar
+    POINT at = Place(mi.rcMonitor, SizeFor(c_.stats.size(), c_.showGraph, s_), fx, fy, s_);
+    Render(at.x, at.y);
     uint64_t now = GetTickCount64();
     if (now - lastTopmost_ > 1000) {   // games and other overlays go topmost too - stay above them
         lastTopmost_ = now;
@@ -118,43 +115,8 @@ void Overlay::Hide() {
     if (hwnd_ && visible_) ShowWindow(hwnd_, SW_HIDE);
     visible_ = false;
 }
-
-void Overlay::SetMoving(bool on) {
-    if (!hwnd_ || on == moving_) return;
-    moving_ = on;
-    placedOnce_ = false;
-    LONG_PTR ex = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
-    ex = on ? (ex & ~WS_EX_TRANSPARENT) : (ex | WS_EX_TRANSPARENT);   // clickable only while moving
-    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, ex);
-    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-}
-
-bool Overlay::TakeMoved(double& fx, double& fy) {
-    if (!moved_) return false;
-    moved_ = false;
-    fx = movedX_; fy = movedY_;
-    return true;
-}
-
-bool Overlay::TakeDone() { bool d = done_; done_ = false; return d; }
-
-// dropped after a drag: where is it, as 0..1 across its screen?
-void Overlay::Dropped() {
-    RECT w; GetWindowRect(hwnd_, &w);
-    pos_ = { w.left, w.top };
-    MONITORINFO mi = { sizeof(mi) };
-    GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &mi);
-    const RECT& r = mi.rcMonitor;
-    int m = (int)std::lround(14 * s_);
-    double spanX = std::max(1L, r.right - r.left - (w.right - w.left) - 2 * m);
-    double spanY = std::max(1L, r.bottom - r.top - (w.bottom - w.top) - 2 * m);
-    movedX_ = std::clamp((w.left - r.left - m) / spanX, 0.0, 1.0);
-    movedY_ = std::clamp((w.top - r.top - m) / spanY, 0.0, 1.0);
-    moved_ = true;
-}
-
 void Overlay::Render(int x, int y) {
-    SIZE sz = Measure();
+    SIZE sz = SizeFor(c_.stats.size(), c_.showGraph, s_);
     int w = sz.cx, h = sz.cy;
     HDC screen = GetDC(nullptr);
     HDC mem = CreateCompatibleDC(screen);
@@ -171,7 +133,6 @@ void Overlay::Render(int x, int y) {
         g.Clear(G::Color(0, 0, 0, 0));
         float s = s_;
         int bgA = (int)std::lround(c_.opacity * 2.55);
-        if (moving_) bgA = std::max(bgA, 110);   // something to grab even when it's see-through
         bool outline = bgA < 150;
         if (bgA > 0) {
             G::GraphicsPath p;
@@ -179,14 +140,6 @@ void Overlay::Render(int x, int y) {
             G::SolidBrush bg(G::Color((BYTE)bgA, 12, 13, 17));
             g.FillPath(&bg, &p);
         }
-        if (moving_) {
-            G::GraphicsPath p;
-            RoundRect(p, 1.5f, 1.5f, w - 3.0f, h - 3.0f, 10 * s);
-            G::Pen pen(FromRef(c_.accent), 2 * s);
-            pen.SetDashStyle(G::DashStyleDash);
-            g.DrawPath(&pen, &p);
-        }
-
         // FPS
         float px = Pad() * s, y0 = Pad() * s - 5 * s;
         wchar_t b[32];
@@ -227,7 +180,6 @@ void Overlay::Render(int x, int y) {
             }
             ty = gy + gh;
         }
-        if (moving_) Text(g, L"Drag me - double-click when done", px, ty + 4 * s, 10.5f * s, false, kText, true);
     }
     HGDIOBJ old = SelectObject(mem, dib);
     POINT dst = { x, y }, src = { 0, 0 };
@@ -237,17 +189,5 @@ void Overlay::Render(int x, int y) {
     DeleteObject(dib);
     DeleteDC(mem);
     ReleaseDC(nullptr, screen);
-    pos_ = { x, y };
-    size_ = sz;
 }
 
-LRESULT CALLBACK Overlay::Proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    auto* self = (Overlay*)GetWindowLongPtrW(h, GWLP_USERDATA);
-    switch (msg) {
-        case WM_NCHITTEST: return self && self->moving_ ? HTCAPTION : HTTRANSPARENT;   // clicks go to the game
-        case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
-        case WM_EXITSIZEMOVE: if (self) self->Dropped(); return 0;
-        case WM_NCLBUTTONDBLCLK: if (self && self->moving_) { self->done_ = true; return 0; } break;
-    }
-    return DefWindowProcW(h, msg, wp, lp);
-}
