@@ -27,6 +27,77 @@ bool g_occluded = false;
 App* g_app = nullptr;
 UINT g_taskbarCreated = 0;
 
+// "ProjectOptM.Command": the jump list (and a second launch) ask the running copy to do something.
+// The running copy is admin, so it lets exactly this one message through from normal programs - the
+// worst anyone could do with it is show or hide the window, or flip the overlay.
+UINT g_cmdMsg = 0;
+enum : WPARAM { kCmdShow = 1, kCmdHide = 2, kCmdOverlay = 3 };
+
+bool SendToRunningCopy(WPARAM cmd) {
+    HWND w = FindWindowW(L"ProjectOptM", nullptr);
+    if (!w) return false;
+    if (!cmd) return true;
+    AllowSetForegroundWindow(ASFW_ANY);   // so it can come to the front
+    return PostMessageW(w, g_cmdMsg, cmd, 0) != 0;
+}
+
+// the command line after the exe name
+std::wstring Arguments() {
+    const wchar_t* c = GetCommandLineW();
+    bool quoted = false;
+    while (*c && (quoted || (*c != L' ' && *c != L'\t'))) { if (*c == L'"') quoted = !quoted; c++; }
+    while (*c == L' ' || *c == L'\t') c++;
+    return c;
+}
+
+// Right-click on the taskbar button: Hide to tray, Overlay on / off. Each item runs the exe with
+// --cmd, which only messages the running copy - no admin prompt, no second copy.
+void BuildJumpList(const std::wstring& exe) {
+    if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return;
+    ICustomDestinationList* list = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_DestinationList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&list)))) {
+        list->SetAppID(L"ProjectOptM.Optimizer");
+        UINT slots = 0;
+        IObjectArray* removed = nullptr;
+        if (SUCCEEDED(list->BeginList(&slots, IID_PPV_ARGS(&removed)))) {
+            IObjectCollection* tasks = nullptr;
+            if (SUCCEEDED(CoCreateInstance(CLSID_EnumerableObjectCollection, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&tasks)))) {
+                const PROPERTYKEY kTitle = { { 0xF29F85E0, 0x4FF9, 0x1068, { 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27, 0xB3, 0xD9 } }, 2 };   // PKEY_Title
+                auto add = [&](const wchar_t* title, const wchar_t* args) {
+                    IShellLinkW* link = nullptr;
+                    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))) return;
+                    link->SetPath(exe.c_str());
+                    link->SetArguments(args);
+                    link->SetDescription(title);
+                    link->SetIconLocation(exe.c_str(), 0);
+                    IPropertyStore* ps = nullptr;
+                    if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&ps)))) {   // the text the jump list shows
+                        PROPVARIANT pv;
+                        PropVariantInit(&pv);
+                        size_t bytes = (wcslen(title) + 1) * sizeof(wchar_t);
+                        pv.vt = VT_LPWSTR;
+                        pv.pwszVal = (LPWSTR)CoTaskMemAlloc(bytes);
+                        if (pv.pwszVal) { memcpy(pv.pwszVal, title, bytes); ps->SetValue(kTitle, pv); ps->Commit(); }
+                        PropVariantClear(&pv);
+                        ps->Release();
+                    }
+                    tasks->AddObject(link);
+                    link->Release();
+                };
+                add(L"Hide to tray", L"--cmd hide");
+                add(L"Overlay on / off", L"--cmd overlay");
+                IObjectArray* arr = nullptr;
+                if (SUCCEEDED(tasks->QueryInterface(IID_PPV_ARGS(&arr)))) { list->AddUserTasks(arr); arr->Release(); }
+                tasks->Release();
+            }
+            list->CommitList();
+            if (removed) removed->Release();
+        }
+        list->Release();
+    }
+    CoUninitialize();
+}
+
 void CreateRenderTarget() {
     ID3D11Texture2D* back = nullptr;
     g_swapChain->GetBuffer(0, IID_PPV_ARGS(&back));
@@ -105,9 +176,15 @@ void CleanupDevice() {
 LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
     if (msg == g_taskbarCreated && g_taskbarCreated && g_app) { g_app->OnTaskbarCreated(); return 0; }
+    if (msg == g_cmdMsg && g_cmdMsg && g_app) {
+        if (wp == kCmdShow) g_app->ShowMain();
+        else if (wp == kCmdHide) g_app->HideToTray();
+        else if (wp == kCmdOverlay) g_app->ToggleOverlay();
+        return 0;
+    }
     switch (msg) {
         case WM_SIZE:
-            if (wp == SIZE_MINIMIZED) { if (g_app) g_app->OnMinimize(); }   // lives on in the tray
+            if (wp == SIZE_MINIMIZED) { if (g_app) g_app->OnMinimize(); }   // a normal minimize - stays on the taskbar
             else { g_resizeW = LOWORD(lp); g_resizeH = HIWORD(lp); }
             return 0;
         case WM_APP_TRAY:
@@ -167,34 +244,55 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         LocalFree(argv);
     }
 
+    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
+    std::wstring self = util::SelfPath();
+    g_cmdMsg = RegisterWindowMessageW(L"ProjectOptM.Command");
+
+    // A jump-list item (--cmd hide / overlay): tell the running copy, then stop. Never asks for admin.
+    std::wstring cmdArg;
+    if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
+        for (int i = 1; i + 1 < argc; i++) if (wcscmp(argv[i], L"--cmd") == 0) cmdArg = argv[i + 1];
+        LocalFree(argv);
+    }
+    if (!cmdArg.empty()) {
+        SendToRunningCopy(cmdArg == L"hide" ? kCmdHide : cmdArg == L"overlay" ? kCmdOverlay : 0);
+        return 0;
+    }
+
+    // Opened without admin (a normal double-click): if a copy is already running, just bring it up;
+    // otherwise ask Windows for admin - the usual prompt, every time - and start that way.
+    // (Test copies run as they are.)
+    if (!testCopy && !util::IsElevated()) {
+        if (SendToRunningCopy(tray ? 0 : kCmdShow)) return 0;
+        std::wstring args = Arguments();
+        SHELLEXECUTEINFOW sei = { sizeof(sei) };
+        sei.lpVerb = L"runas";
+        sei.lpFile = self.c_str();
+        sei.lpParameters = args.c_str();
+        sei.nShow = SW_SHOWNORMAL;
+        ShellExecuteExW(&sei);   // "No" on the prompt: nothing more to do
+        return 0;
+    }
+
     // Only one copy at a time - shared with the 1.x app, so the two never optimize at once.
     // After a self-update the old copy may still be closing, so wait for it.
     // (A test copy with its own data folder gets its own lock, so it can run next to the real one.)
-    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
     HANDLE mutex = CreateMutexW(nullptr, FALSE, testCopy ? L"Local\\ProjectOptMTestInstance" : L"Local\\ProjectOptMSingleInstance");
     DWORD waitMs = util::EnvVar(L"OPTM_RESTART").empty() ? 0 : 15000;
     SetEnvironmentVariableW(L"OPTM_RESTART", nullptr);
     DWORD got = mutex ? WaitForSingleObject(mutex, waitMs) : WAIT_FAILED;
     if (got != WAIT_OBJECT_0 && got != WAIT_ABANDONED) {
-        if (screenshot.empty() && !tray)
+        // already running: bring it up (1.x has no window of ours to bring up - say so instead)
+        if (screenshot.empty() && !tray && !SendToRunningCopy(kCmdShow))
             MessageBoxW(nullptr, L"Project OptM is already running. Look for its icon in the system tray.", L"Project OptM", MB_ICONINFORMATION);
         return 0;
     }
     // leftover from a self-update (the previous exe is renamed aside while it's running)
-    std::wstring self = util::SelfPath();
     DeleteFileW((self + L".old").c_str());
 
     SetCurrentProcessExplicitAppUserModelID(L"ProjectOptM.Optimizer");   // same taskbar ID as 1.x, so pins keep working
-    // 1.x ran inside powershell.exe, so Windows kept PowerShell's jump list ("Run ISE as Administrator"...)
-    // under our ID - clear it so right-clicking the taskbar button shows only Project OptM
-    if (SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) {
-        ICustomDestinationList* jump = nullptr;
-        if (SUCCEEDED(CoCreateInstance(CLSID_DestinationList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&jump)))) {
-            jump->DeleteList(L"ProjectOptM.Optimizer");
-            jump->Release();
-        }
-        CoUninitialize();
-    }
+    // our jump list (it also replaces the PowerShell one 1.x left under this ID); test copies leave it alone
+    if (!testCopy) BuildJumpList(self);
     ImGui_ImplWin32_EnableDpiAwareness();
     float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
 
@@ -211,6 +309,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                                 w, h, nullptr, nullptr, inst, nullptr);
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+    // we run as admin: let the jump list (a normal program) reach us - this one message only
+    ChangeWindowMessageFilterEx(hwnd, g_cmdMsg, MSGFLT_ALLOW, nullptr);
 
     if (!CreateDevice(hwnd)) {
         CleanupDevice();

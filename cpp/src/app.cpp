@@ -698,9 +698,13 @@ OverlayContent App::OverlayNow() {
 
 void App::OnActivate() { if (Ms() - lastChecks_ >= 10000) RefreshChecks(); }
 
-void App::OnMinimize() {
+// Minimize is a normal minimize: the window stays on the taskbar and in Alt+Tab
+void App::OnMinimize() {}
+
+// Hide to tray: off the taskbar entirely, back with the tray icon
+void App::HideToTray() {
     ShowWindow(hwnd_, SW_HIDE);
-    if (!trayTipShown_) { Balloon("Still running here. Double-click the icon to open."); trayTipShown_ = true; }
+    if (!trayTipShown_) { Balloon("Still running here. Click the icon to open."); trayTipShown_ = true; }
 }
 
 void App::ShowMain() {

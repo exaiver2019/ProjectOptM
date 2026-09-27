@@ -47,6 +47,7 @@ public:
     void ToggleOverlay();          // Ctrl+Alt+O
     void OnActivate();
     void OnMinimize();
+    void HideToTray();
     void OnTaskbarCreated();
     void ShowMain();
 

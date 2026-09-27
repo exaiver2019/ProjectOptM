@@ -61,7 +61,7 @@ src/system_info.*     CPU topology, RAM (SMBIOS), GPUs (DXGI), display, Windows 
 src/data.*            profiles.ini, settings.json, history.csv (same formats as 1.1)
 src/json.*, util.*    helpers
 src/version.h         version number and update repo
-res/                  icon, manifest (asks for admin), version info
+res/                  icon, manifest (asInvoker - main.cpp asks for admin itself), version info
 third_party/imgui     Dear ImGui 1.91.9 (MIT license)
 ```
 
@@ -124,6 +124,18 @@ and, with Settings > **Restore everything on exit** (on by default), also the pe
 applies at launch: launch priority (IFEO), fullscreen optimizations and the dedicated-GPU preference -
 your own previous GPU preference is recorded (`GpuManaged` in settings.json) and put back. They're set
 again when the app starts. Restarting into a new build doesn't revert them.
+
+## Taskbar, minimize and the jump list
+
+Minimize is a normal minimize: the window stays on the taskbar and in Alt+Tab (it used to hide in the tray).
+Right-click the taskbar button for **Hide to tray** and **Overlay on / off**.
+
+How it works without a UAC prompt per click: the exe's manifest is `asInvoker`, and main.cpp asks for admin
+itself - opened normally, it relaunches with `runas` (the usual prompt, every time the app is opened). The
+jump-list items run the exe with `--cmd hide` / `--cmd overlay`; that copy never elevates, it just posts the
+registered message `ProjectOptM.Command` to the running window and exits. The running (admin) window lets that
+one message through with `ChangeWindowMessageFilterEx` - it can only show or hide the window, or flip the
+overlay. Opening the app while it's already running brings the window up the same way (no second prompt).
 
 ## In-game overlay
 
@@ -216,4 +228,4 @@ Handy for testing without touching your real setup:
 | `OPTM_FEEDBACK_TEST=<title>` | build a feedback link at start and log it instead of opening it (`--feedback-long` tests the clipboard path) |
 | `OPTM_UPDATE_AS=<version>` | pretend to be an older version when checking for updates |
 
-Set `__COMPAT_LAYER=RunAsInvoker` to start it without the admin prompt (anything needing admin then fails and is logged).
+A test copy (`--data-dir`) runs without admin and never asks for it (anything needing admin then fails and is logged).
