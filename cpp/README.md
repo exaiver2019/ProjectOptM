@@ -123,8 +123,9 @@ again when the app starts. Restarting into a new build doesn't revert them.
 
 The **Overlay** page (or Overlay on the Home page, or Ctrl+Alt+O) shows FPS and any of: 1% low,
 frametime, a mini frametime graph (last 4 s, spikes in amber), GPU usage + temperature, VRAM, CPU usage, RAM -
-4 times a second. **Move overlay** makes it draggable (double-click or Done moving to finish); its spot is
-saved as 0..1 across the screen, so it lands in the same place on any monitor. Background opacity 0-100%
+4 times a second. Its spot is set in the page's **Position** card: a picture of your screen (its real shape,
+the game's monitor while one runs) with the overlay drawn at its real size - drag it, click anywhere to move it
+there, or snap to a corner. Saved as 0..1 across the screen, so it lands in the same place on any monitor. Background opacity 0-100%
 (0 = outlined text only) and size 70-160%.
 It's a GDI+ layered window with per-pixel alpha (`UpdateLayeredWindow`) - `WS_EX_TOPMOST | WS_EX_LAYERED |
 WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`, re-asserted topmost every second, so it never takes
@@ -200,7 +201,6 @@ Handy for testing without touching your real setup:
 | `--history <game>` | open that game's history window |
 | `--game-settings <game>` (`--save-settings`) | open that game's settings (and save them at once - a profiles.ini round-trip check) |
 | `--overlay-demo` (with `--fps-self`) | show the in-game overlay over the app's own window (if it's on in settings) |
-| `--overlay-move` | start with the overlay in move mode |
 | `OPTM_TEST_SYSTEM=1` | let a test copy change Windows-wide settings (launch priority, GPU, FSO) - use only with made-up test games |
 | `--feedback` (`--feedback-preview`) | open the feedback form (with its preview) |
 | `OPTM_FEEDBACK_TEST=<title>` | build a feedback link at start and log it instead of opening it (`--feedback-long` tests the clipboard path) |
