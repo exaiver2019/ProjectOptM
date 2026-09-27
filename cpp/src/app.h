@@ -29,6 +29,7 @@ public:
     void Render();                 // draws one frame
     void Shutdown();               // puts everything back before exit
     bool Busy() const;             // true while something animates / is being dragged
+    DWORD MaxWaitMs() const;       // longest the main loop may sleep (the overlay needs regular redraws)
     bool WantsRestart() const { return restart_; }
     bool RestartHidden() const { return restartHidden_; }   // restart into the tray
 
@@ -71,6 +72,7 @@ private:
     void UpdateOverlay();          // show / refresh / hide the in-game overlay
     OverlayContent OverlayNow();   // what it shows right now
     float OverlayScale() const;
+    int OverlayIntervalMs() const;
     void OverlayPositioner();      // the Overlay page's picture of your screen: drag the overlay into place
     HWND GameWindow();             // the running game's main window (cached)
     void Balloon(const char* text, DWORD icon = NIIF_INFO);

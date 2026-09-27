@@ -247,10 +247,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     // The optimizer keeps ticking while the window is hidden in the tray.
     bool done = false;
     int burst = 3;
+    ULONGLONG lastFrame = 0;
     while (!done) {
         bool hidden = IsIconic(hwnd) || !IsWindowVisible(hwnd);
         DWORD wait = hidden ? 250 : (burst > 0 || app.Busy()) ? 0 : 200;
-        if (MsgWaitForMultipleObjects(0, nullptr, FALSE, wait, QS_ALLINPUT) == WAIT_OBJECT_0) burst = 4;
+        wait = std::min(wait, app.MaxWaitMs());
+        bool input = MsgWaitForMultipleObjects(0, nullptr, FALSE, wait, QS_ALLINPUT) == WAIT_OBJECT_0;
+        if (input) burst = 4;
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&msg);
@@ -262,6 +265,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         if (!IsWindow(hwnd)) continue;
         if (!screenshot.empty() && GetTickCount64() >= std::max(shotAt + 5000, exitAt)) { DestroyWindow(hwnd); continue; }   // hidden: give up on the shot
         if (IsIconic(hwnd) || !IsWindowVisible(hwnd)) continue;
+        // woken only so the overlay could redraw: the window itself keeps its slow 5 fps idle tick
+        if (!input && burst == 0 && !app.Busy() && GetTickCount64() - lastFrame < 190) continue;
+        lastFrame = GetTickCount64();
         if (g_occluded && g_swapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) continue;
         g_occluded = false;
         if (g_resizeW && g_resizeH) {

@@ -623,7 +623,7 @@ std::wstring Num(double v, const wchar_t* fmt) { wchar_t b[48]; swprintf(b, 48, 
 
 void App::UpdateOverlay() {
     uint64_t now = Ms();
-    if (now - lastOverlay_ < 250) return;   // 4 updates a second, like Afterburner's
+    if (now - lastOverlay_ < (uint64_t)OverlayIntervalMs()) return;   // Overlay page > Update speed
     lastOverlay_ = now;
     HWND game = nullptr;
     bool want = false;
@@ -646,6 +646,11 @@ void App::UpdateOverlay() {
 }
 
 float App::OverlayScale() const { return Zoom() * data_.overlaySize / 100.0f; }
+
+int App::OverlayIntervalMs() const { return 1000 / std::clamp(data_.overlayRate, 1, 30); }
+
+// How long the main loop may sleep: the overlay needs a wake-up for every redraw, even from the tray
+DWORD App::MaxWaitMs() const { return overlay_.Visible() ? (DWORD)std::max(10, OverlayIntervalMs() - 5) : 250; }
 
 // What the overlay shows right now (also drawn small in the Overlay page's screen preview)
 OverlayContent App::OverlayNow() {
@@ -2423,6 +2428,19 @@ void App::PageOverlay() {
     ImGui::SetNextItemWidth(sw);
     ImGui::SliderInt("##ovsize", &data_.overlaySize, 70, 160, "%d%%");
     if (ImGui::IsItemDeactivatedAfterEdit()) data_.SaveConfig();
+
+    // how often it redraws
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kSub, "Update speed");
+    ImGui::SameLine(110 * s_);
+    const std::pair<int, const char*> rates[] = { { 2, "2 / s" }, { 4, "4 / s" }, { 10, "10 / s" }, { 20, "20 / s" } };
+    for (size_t i = 0; i < 4; i++) {
+        if (i) ImGui::SameLine();
+        if (toggle(rates[i].second, data_.overlayRate == rates[i].first)) { data_.overlayRate = rates[i].first; data_.SaveConfig(); }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("How often the FPS numbers and graph refresh (10 / s costs about 1%% of one CPU core).\n"
+                              "GPU, VRAM, CPU and RAM readings refresh once a second - Windows updates them no faster.");
+    }
 
     ImGui::PushTextWrapPos(0);
     ImGui::TextColored(kDim, "Shown while you're in the game. %s shows or hides it. It's a separate click-through window "

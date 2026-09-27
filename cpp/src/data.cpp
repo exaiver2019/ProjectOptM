@@ -491,6 +491,7 @@ void AppData::LoadConfig() {
     }
     if (ov["Opacity"].type == Json::Number) overlayOpacity = std::clamp((int)ov["Opacity"].num, 0, 100);
     if (ov["Size"].type == Json::Number) overlaySize = std::clamp((int)ov["Size"].num, 70, 200);
+    if (ov["Rate"].type == Json::Number) overlayRate = std::clamp((int)ov["Rate"].num, 1, 30);
     if (ov["Items"].type == Json::Array) overlayItems = ov["Items"].AsStrings();
     else if (!ov["Graph"].AsBool(true)) overlayItems = { "low", "frametime" };
     overlayAntiCheat = ov["AntiCheat"].AsBool(false);
@@ -522,6 +523,7 @@ void AppData::SaveConfig() const {
     ov.obj["Y"] = Json::Num(overlayY);
     ov.obj["Opacity"] = Json::Num(overlayOpacity);
     ov.obj["Size"] = Json::Num(overlaySize);
+    ov.obj["Rate"] = Json::Num(overlayRate);
     ov.obj["Items"] = Json::StrList(overlayItems);
     ov.obj["AntiCheat"] = Json::Boolean(overlayAntiCheat);
     j.obj["Overlay"] = ov;

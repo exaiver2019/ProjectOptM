@@ -83,6 +83,7 @@ struct AppData {
     double overlayX = 0, overlayY = 0;                 // where it sits: 0 = left/top edge ... 1 = right/bottom edge of the screen
     int overlayOpacity = 85;                           // background, percent (0 = see-through, text only)
     int overlaySize = 100;                             // percent
+    int overlayRate = 10;                              // redraws per second (2, 4, 10 or 20)
     std::vector<std::string> overlayItems = { "low", "frametime", "graph" };   // shown under the FPS (see OverlayItems in app.cpp)
     bool overlayAntiCheat = false;                     // also over anti-cheat games (off: their anti-cheat might not like it)
     std::string restorePlan;                           // power plan to go back to (crash recovery)
