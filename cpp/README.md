@@ -119,22 +119,14 @@ applies at launch: launch priority (IFEO), fullscreen optimizations and the dedi
 your own previous GPU preference is recorded (`GpuManaged` in settings.json) and put back. They're set
 again when the app starts. Restarting into a new build doesn't revert them.
 
-## Admin without the prompt, and Start with Windows
+## Start with Windows
 
-The exe's manifest is `asInvoker`; the app gets admin itself (main.cpp). Opened without admin, it:
-1. hands over to a copy that's already running (posts the registered message `ProjectOptM.Show`, which
-   the admin window lets through with `ChangeWindowMessageFilterEx`) - so a second launch opens the window;
-2. if the admin task exists and points at this exe, starts it through the task - no UAC prompt;
-3. otherwise relaunches itself with `runas` (the usual UAC prompt), passing its arguments on.
-
-The admin task is a Task Scheduler task, "Project OptM (<user>)", that runs the exe with `--tray` and
-*Run with highest privileges* (normal priority, no time limit, runs on battery). Windows asks for admin once,
-when it's created - the app is already admin then. Settings:
-- **Open without the admin prompt** - the task with no trigger; opening the app goes through it.
-- **Start with Windows** - the same task plus a sign-in trigger (10 s delay), so the app starts in the tray.
-Turning both off deletes the task. If the exe moves, the next start points the task at the new path.
-Test copies (`--data-dir`) run as they are, never elevate and never touch the task. A self-restart after an
-update comes back in the tray if the window was hidden. (src/autostart.*)
+Settings > **Start with Windows** creates a Task Scheduler task, "Project OptM (<user>)": at sign-in (10 s
+delay) it runs the exe with `--tray` and *Run with highest privileges*, so the app starts hidden in the tray
+already elevated - no UAC prompt. Normal priority, no time limit, runs on battery. Turning it off deletes
+the task. If the exe moves, the next start points the task at the new path. Test copies (`--data-dir`) never
+touch the task. A self-restart after an update comes back in the tray if the window was hidden.
+(src/autostart.*)
 
 ## Feedback
 
@@ -191,5 +183,4 @@ Handy for testing without touching your real setup:
 | `OPTM_FEEDBACK_TEST=<title>` | build a feedback link at start and log it instead of opening it (`--feedback-long` tests the clipboard path) |
 | `OPTM_UPDATE_AS=<version>` | pretend to be an older version when checking for updates |
 
-A test copy (`--data-dir`) runs without admin and never asks for it (anything needing admin then fails and is logged).
-Start it with `Start-Process -Verb RunAs` to test admin-only features.
+Set `__COMPAT_LAYER=RunAsInvoker` to start it without the admin prompt (anything needing admin then fails and is logged).

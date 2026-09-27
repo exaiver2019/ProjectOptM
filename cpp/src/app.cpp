@@ -138,13 +138,11 @@ void App::Init(HWND hwnd, float dpiScale) {
     opt_.SyncPerGameSettings();
     opt_.ReapplyAtStart();   // put back what the last exit removed (launch priority: SyncLaunchPriority below)
     if (util::EnvVar(L"OPTM_DATA_DIR").empty()) {   // (test copies never touch the real startup task)
-        autostart::State task = autostart::Query();
-        noPrompt_ = task.exists;
-        startWithWindows_ = task.atSignIn;
+        startWithWindows_ = autostart::Enabled();
         // the exe moved (or this is a new copy): keep the task pointing at the one you use
-        if (task.exists && _wcsicmp(task.exe.c_str(), selfPath_.c_str()) != 0) {
+        if (startWithWindows_ && _wcsicmp(autostart::TaskCommand().c_str(), selfPath_.c_str()) != 0) {
             std::string err;
-            if (autostart::Set(selfPath_, task.atSignIn, err)) Log("The admin task now starts this copy: " + util::Narrow(selfPath_));
+            if (autostart::Enable(selfPath_, err)) Log("Start with Windows now starts this copy: " + util::Narrow(selfPath_));
         }
     }
     detector_.Load();
@@ -641,22 +639,6 @@ void App::ClearShaderCache() {
     std::string msg = "Shader cache cleared: " + std::to_string(files) + " files, " + std::to_string(freed / (1024 * 1024)) + " MB freed";
     if (skipped) msg += " (" + std::to_string(skipped) + " in use, skipped)";
     Log(msg);
-}
-
-// Settings > Open without the admin prompt / Start with Windows: both are the one admin task
-void App::SetAdminTask(bool noPrompt, bool atSignIn) {
-    std::string err;
-    bool ok = noPrompt ? autostart::Set(selfPath_, atSignIn, err) : autostart::Remove(err);
-    if (!ok) { Log("Couldn't change the admin task: " + err); return; }
-    bool wasPrompt = noPrompt_, wasSignIn = startWithWindows_;
-    noPrompt_ = noPrompt;
-    startWithWindows_ = noPrompt && atSignIn;
-    if (startWithWindows_ != wasSignIn)
-        Log(startWithWindows_ ? "Start with Windows on - Project OptM starts in the tray when you sign in, already running as admin"
-                              : "Start with Windows off (opening still skips the admin prompt)");
-    else if (noPrompt_ != wasPrompt)
-        Log(noPrompt_ ? "Opening Project OptM no longer asks for admin - Windows won't show the prompt"
-                      : "Opening Project OptM asks for admin again");
 }
 
 void App::OpenProfiles() {
@@ -2277,26 +2259,24 @@ void App::PageSettings() {
         ImGui::SetTooltip("ON: when you exit Project OptM, your PC goes back exactly to how it was - including the per-game\n"
                           "launch priority, GPU preference and fullscreen optimization settings. They're set again when it starts.\n"
                           "OFF: those three stay set, so they work even while Project OptM isn't running.");
-    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
-    ImGui::BeginDisabled(testCopy || startWithWindows_);   // starting with Windows needs it
-    if (toggle(noPrompt_ ? "Open without the admin prompt: ON" : "Open without the admin prompt: OFF", noPrompt_))
-        SetAdminTask(!noPrompt_, false);
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("%s", testCopy ? "Not available in a test copy (--data-dir)"
-                              : startWithWindows_ ? "Start with Windows uses this too - turn that off first"
-                                                  : "Opening Project OptM no longer shows Windows' \"allow this app to make changes?\" prompt.\n"
-                                                    "Windows asks once, when you turn this on. Uses a Task Scheduler task that runs\n"
-                                                    "Project OptM as administrator; turning this off removes it.");
     ImGui::SameLine();
+    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
     ImGui::BeginDisabled(testCopy);
-    if (toggle(startWithWindows_ ? "Start with Windows: ON" : "Start with Windows: OFF", startWithWindows_))
-        SetAdminTask(true, !startWithWindows_);
+    if (toggle(startWithWindows_ ? "Start with Windows: ON" : "Start with Windows: OFF", startWithWindows_)) {
+        std::string err;
+        bool on = !startWithWindows_;
+        if (on ? autostart::Enable(selfPath_, err) : autostart::Disable(err)) {
+            startWithWindows_ = on;
+            Log(on ? "Start with Windows on - Project OptM starts in the tray when you sign in, as admin, without the Windows prompt"
+                   : "Start with Windows off");
+        } else Log(std::string("Couldn't turn Start with Windows ") + (on ? "on" : "off") + ": " + err);
+    }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("%s", testCopy ? "Not available in a test copy (--data-dir)"
                                          : "Starts Project OptM in the tray when you sign in to Windows - already running as\n"
-                                           "administrator, so there's no prompt. Also turns on Open without the admin prompt.");
+                                           "administrator, so there's no \"allow this app to make changes?\" prompt.\n"
+                                           "Uses a Task Scheduler task; turning this off removes it.");
     ImGui::PushTextWrapPos(0);
     ImGui::TextColored(kSub, "Everything Project OptM changes is put back when the game closes, when you exit, or instantly with %s.%s",
                        hotkey_ ? "Ctrl+Alt+End" : "the tray menu",

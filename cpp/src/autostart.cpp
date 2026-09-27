@@ -43,18 +43,6 @@ std::wstring XmlEscape(const std::wstring& s) {
     return o;
 }
 
-std::wstring XmlUnescape(std::wstring s) {
-    for (auto [from, to] : { std::pair<const wchar_t*, const wchar_t*>{ L"&lt;", L"<" }, { L"&gt;", L">" }, { L"&amp;", L"&" } })
-        for (size_t p; (p = s.find(from)) != std::wstring::npos;) s.replace(p, wcslen(from), to);
-    return s;
-}
-
-std::string Refused(HRESULT hr) {
-    if (hr == E_ACCESSDENIED) return "needs admin rights";
-    char b[80]; snprintf(b, sizeof(b), "Task Scheduler refused it (0x%08lX)", (unsigned long)hr);
-    return b;
-}
-
 bool RootFolder(Ptr<ITaskService>& svc, Ptr<ITaskFolder>& folder) {
     if (FAILED(CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER, IID_ITaskService, (void**)&svc))) return false;
     VARIANT none; VariantInit(&none);
@@ -67,26 +55,33 @@ bool RootFolder(Ptr<ITaskService>& svc, Ptr<ITaskFolder>& folder) {
 
 namespace autostart {
 
-State Query() {
-    State st;
+bool Enabled() {
     Com com;
     Ptr<ITaskService> svc; Ptr<ITaskFolder> folder; Ptr<IRegisteredTask> task;
-    if (!RootFolder(svc, folder)) return st;
+    if (!RootFolder(svc, folder)) return false;
     Bstr name(TaskName());
-    if (FAILED(folder->GetTask(name.b, &task))) return st;
-    st.exists = true;
-    BSTR xml = nullptr;
-    if (SUCCEEDED(task->get_Xml(&xml)) && xml) {
-        std::wstring x = xml;
-        SysFreeString(xml);
-        st.atSignIn = x.find(L"<LogonTrigger") != std::wstring::npos;
-        size_t a = x.find(L"<Command>"), b = x.find(L"</Command>");
-        if (a != std::wstring::npos && b != std::wstring::npos && b > a) st.exe = XmlUnescape(x.substr(a + 9, b - a - 9));
-    }
-    return st;
+    return SUCCEEDED(folder->GetTask(name.b, &task));
 }
 
-bool Set(const std::wstring& exe, bool atSignIn, std::string& error) {
+std::wstring TaskCommand() {
+    Com com;
+    Ptr<ITaskService> svc; Ptr<ITaskFolder> folder; Ptr<IRegisteredTask> task;
+    if (!RootFolder(svc, folder)) return L"";
+    Bstr name(TaskName());
+    if (FAILED(folder->GetTask(name.b, &task))) return L"";
+    BSTR xml = nullptr;
+    if (FAILED(task->get_Xml(&xml)) || !xml) return L"";
+    std::wstring x = xml;
+    SysFreeString(xml);
+    size_t a = x.find(L"<Command>"), b = x.find(L"</Command>");
+    if (a == std::wstring::npos || b == std::wstring::npos || b < a) return L"";
+    std::wstring cmd = x.substr(a + 9, b - a - 9);
+    for (auto [from, to] : { std::pair<const wchar_t*, const wchar_t*>{ L"&lt;", L"<" }, { L"&gt;", L">" }, { L"&amp;", L"&" } })
+        for (size_t p; (p = cmd.find(from)) != std::wstring::npos;) cmd.replace(p, wcslen(from), to);
+    return cmd;
+}
+
+bool Enable(const std::wstring& exe, std::string& error) {
     Com com;
     Ptr<ITaskService> svc; Ptr<ITaskFolder> folder; Ptr<IRegisteredTask> task;
     if (!RootFolder(svc, folder)) { error = "couldn't reach Task Scheduler"; return false; }
@@ -95,11 +90,9 @@ bool Set(const std::wstring& exe, bool atSignIn, std::string& error) {
         L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>"
         L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">"
         L"<RegistrationInfo><Author>Project OptM</Author>"
-        L"<Description>Lets Project OptM start as administrator without the Windows prompt"
-        + std::wstring(atSignIn ? L", and starts it in the tray when you sign in" : L"") +
-        L". Change it in Project OptM: Settings.</Description></RegistrationInfo>"
-        + (atSignIn ? L"<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>" + user + L"</UserId><Delay>PT10S</Delay></LogonTrigger></Triggers>"
-                    : std::wstring(L"<Triggers/>")) +
+        L"<Description>Starts Project OptM in the tray when you sign in, as administrator, without the Windows prompt. "
+        L"Turn it off in Project OptM: Settings &gt; Start with Windows.</Description></RegistrationInfo>"
+        L"<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>" + user + L"</UserId><Delay>PT10S</Delay></LogonTrigger></Triggers>"
         L"<Principals><Principal id=\"Author\"><UserId>" + user + L"</UserId>"
         L"<LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>"
         L"<Settings>"
@@ -120,28 +113,26 @@ bool Set(const std::wstring& exe, bool atSignIn, std::string& error) {
     Bstr name(TaskName()), text(xml);
     VARIANT none; VariantInit(&none);
     HRESULT hr = folder->RegisterTask(name.b, text.b, TASK_CREATE_OR_UPDATE, none, none, TASK_LOGON_INTERACTIVE_TOKEN, none, &task);
-    if (FAILED(hr)) { error = Refused(hr); return false; }
+    if (FAILED(hr)) {
+        char b[80]; snprintf(b, sizeof(b), "Task Scheduler refused it (0x%08lX)", (unsigned long)hr);
+        error = hr == E_ACCESSDENIED ? "needs admin rights" : b;
+        return false;
+    }
     return true;
 }
 
-bool Remove(std::string& error) {
+bool Disable(std::string& error) {
     Com com;
     Ptr<ITaskService> svc; Ptr<ITaskFolder> folder;
     if (!RootFolder(svc, folder)) { error = "couldn't reach Task Scheduler"; return false; }
     Bstr name(TaskName());
     HRESULT hr = folder->DeleteTask(name.b, 0);
-    if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) { error = Refused(hr); return false; }
+    if (FAILED(hr) && hr != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) {
+        char b[80]; snprintf(b, sizeof(b), "Task Scheduler refused it (0x%08lX)", (unsigned long)hr);
+        error = hr == E_ACCESSDENIED ? "needs admin rights" : b;
+        return false;
+    }
     return true;
-}
-
-bool Run() {
-    Com com;
-    Ptr<ITaskService> svc; Ptr<ITaskFolder> folder; Ptr<IRegisteredTask> task; Ptr<IRunningTask> running;
-    if (!RootFolder(svc, folder)) return false;
-    Bstr name(TaskName());
-    if (FAILED(folder->GetTask(name.b, &task))) return false;
-    VARIANT none; VariantInit(&none);
-    return SUCCEEDED(task->Run(none, &running));
 }
 
 }  // namespace autostart

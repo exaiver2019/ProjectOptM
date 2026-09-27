@@ -10,7 +10,6 @@
 #include <algorithm>
 
 #include "app.h"
-#include "autostart.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
@@ -27,28 +26,6 @@ UINT g_resizeW = 0, g_resizeH = 0;
 bool g_occluded = false;
 App* g_app = nullptr;
 UINT g_taskbarCreated = 0;
-UINT g_showMsg = 0;          // "ProjectOptM.Show": another launch asks the running copy to open its window
-
-// Hands this launch to the copy that's running as admin: posts "show" (allowed through by its message filter)
-bool ShowRunningCopy(DWORD waitMs) {
-    for (DWORD waited = 0;; waited += 100) {
-        if (HWND w = FindWindowW(L"ProjectOptM", nullptr)) {
-            AllowSetForegroundWindow(ASFW_ANY);
-            if (PostMessageW(w, g_showMsg, 0, 0)) return true;
-        }
-        if (waited >= waitMs) return false;
-        Sleep(100);
-    }
-}
-
-// the command line after the exe name
-std::wstring Arguments() {
-    const wchar_t* c = GetCommandLineW();
-    bool quoted = false;
-    while (*c && (quoted || (*c != L' ' && *c != L'\t'))) { if (*c == L'"') quoted = !quoted; c++; }
-    while (*c == L' ' || *c == L'\t') c++;
-    return c;
-}
 
 void CreateRenderTarget() {
     ID3D11Texture2D* back = nullptr;
@@ -128,7 +105,6 @@ void CleanupDevice() {
 LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
     if (msg == g_taskbarCreated && g_taskbarCreated && g_app) { g_app->OnTaskbarCreated(); return 0; }
-    if (msg == g_showMsg && g_showMsg && g_app) { g_app->ShowMain(); return 0; }
     switch (msg) {
         case WM_SIZE:
             if (wp == SIZE_MINIMIZED) { if (g_app) g_app->OnMinimize(); }   // lives on in the tray
@@ -190,46 +166,21 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         LocalFree(argv);
     }
 
-    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
-    std::wstring self = util::SelfPath();
-    g_showMsg = RegisterWindowMessageW(L"ProjectOptM.Show");
-
-    // Project OptM needs admin. Opened without it (a normal double-click), in this order:
-    //  1. a copy is already running  -> open its window
-    //  2. the admin task is set up (Settings > Open without the admin prompt) -> start through it, no prompt
-    //  3. otherwise ask Windows for admin, as usual
-    // (Test copies run as they are.)
-    if (!testCopy && !util::IsElevated()) {
-        if (FindWindowW(L"ProjectOptM", nullptr)) { if (!tray) ShowRunningCopy(0); return 0; }
-        autostart::State task = autostart::Query();
-        if (task.exists && _wcsicmp(task.exe.c_str(), self.c_str()) == 0 && autostart::Run()) {
-            if (!tray) ShowRunningCopy(15000);   // it starts in the tray - bring the window up once it's there
-            return 0;
-        }
-        std::wstring args = Arguments();
-        SHELLEXECUTEINFOW sei = { sizeof(sei) };
-        sei.lpVerb = L"runas";
-        sei.lpFile = self.c_str();
-        sei.lpParameters = args.c_str();
-        sei.nShow = SW_SHOWNORMAL;
-        ShellExecuteExW(&sei);   // if you click No, there's nothing more to do
-        return 0;
-    }
-
     // Only one copy at a time - shared with the 1.x app, so the two never optimize at once.
     // After a self-update the old copy may still be closing, so wait for it.
     // (A test copy with its own data folder gets its own lock, so it can run next to the real one.)
+    bool testCopy = !util::EnvVar(L"OPTM_DATA_DIR").empty();
     HANDLE mutex = CreateMutexW(nullptr, FALSE, testCopy ? L"Local\\ProjectOptMTestInstance" : L"Local\\ProjectOptMSingleInstance");
     DWORD waitMs = util::EnvVar(L"OPTM_RESTART").empty() ? 0 : 15000;
     SetEnvironmentVariableW(L"OPTM_RESTART", nullptr);
     DWORD got = mutex ? WaitForSingleObject(mutex, waitMs) : WAIT_FAILED;
     if (got != WAIT_OBJECT_0 && got != WAIT_ABANDONED) {
-        // already running: open its window (1.x has no window of ours to open - say so instead)
-        if (screenshot.empty() && !tray && !ShowRunningCopy(0))
+        if (screenshot.empty() && !tray)
             MessageBoxW(nullptr, L"Project OptM is already running. Look for its icon in the system tray.", L"Project OptM", MB_ICONINFORMATION);
         return 0;
     }
     // leftover from a self-update (the previous exe is renamed aside while it's running)
+    std::wstring self = util::SelfPath();
     DeleteFileW((self + L".old").c_str());
 
     SetCurrentProcessExplicitAppUserModelID(L"ProjectOptM.Optimizer");   // same taskbar ID as 1.x, so pins keep working
@@ -259,8 +210,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                                 w, h, nullptr, nullptr, inst, nullptr);
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
-    // we run as admin: let a normal (non-admin) launch ask us to open the window - only this one message
-    ChangeWindowMessageFilterEx(hwnd, g_showMsg, MSGFLT_ALLOW, nullptr);
 
     if (!CreateDevice(hwnd)) {
         CleanupDevice();
