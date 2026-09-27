@@ -74,7 +74,7 @@ private:
     int  EcoBackground(const std::vector<std::string>& names, const ProcessList& procs);
     void ApplySessionTweaks(const GameProfile& p, const ProcessList& procs);
     void RevertSessionTweaks();
-    void Backup(const std::string& b);
+    bool Backup(const std::string& b);   // true if something was changed (and is now saved to undo)
     bool AnyGameUses(const std::string& tweakId) const;
     bool SystemWide() const;       // false in a test copy: launch priority / GPU / FSO are left alone
     void RestoreGpuPreferences();
@@ -97,5 +97,6 @@ private:
     std::set<ProcKey> ecoBg_;      // background apps we put in efficiency mode
     std::set<ProcKey> cpuSetKeys_; // game processes that may have CPU sets from us
     bool timerOn_ = false;
+    bool awake_ = false;           // keep_awake: SetThreadExecutionState held for the session
     uint64_t trimAt_ = 0;          // working-set trim, once the game has loaded
 };

@@ -67,12 +67,18 @@ third_party/imgui     Dear ImGui 1.91.9 (MIT license)
 
 ## Tweaks
 
-The Tweaks page (Ctrl+3) lists every tweak with an on/off switch, grouped into CPU, Memory, System,
-GPU and Power, with search (Ctrl+F) and category filters.
+The Tweaks page (Ctrl+5) lists all 39 tweaks with an on/off switch, grouped into CPU, Memory, System,
+GPU, Power and Input, with search (Ctrl+F) and category filters.
 
-- **Presets:** Safe (what 1.x always did - the default), Balanced (adds timer resolution, I/O priority,
-  MMCSS, explorer/audio/DWM priority, animations off, Game DVR capture off, fullscreen optimizations off,
-  working-set trim) and Aggressive (adds SMT scheduling, core unparking, C-state disable, max boost).
+- **Presets:** Safe (what 1.x always did, plus Game Mode on, pausing Automatic Maintenance and keeping the
+  screen awake - the default), Balanced (adds timer resolution, I/O priority, MMCSS, explorer/audio/DWM
+  priority, animations and transparency off, Game DVR capture off, fullscreen optimizations off, PCIe link
+  power saving off, the Sticky/Filter/Toggle Keys shortcuts off, working-set trim) and Aggressive (adds SMT
+  scheduling, core unparking, C-state disable, max boost). Mouse acceleration off is opt-in (it changes aim feel).
+- **Only tweaks that do something:** network "throttling", TCP/Nagle, DNS flushing, dynamic tick, HPET and
+  similar placebo tweaks are left out on purpose, and so are ones Windows no longer honours (the global
+  background-apps switch) or that need Explorer restarted (the notifications switch - Windows 11 turns on
+  Do not disturb for full-screen games by itself).
   Built-ins are locked; flipping a switch makes an editable copy. Your presets can be renamed, duplicated,
   exported to / imported from a `.json` file and deleted.
 - **Everything is per session:** tweaks are applied when a game starts and undone when it closes.
@@ -200,6 +206,7 @@ Handy for testing without touching your real setup:
 | `--zoom-after <percent>` | change the interface size 1 s after start (checks live resizing) |
 | `--history <game>` | open that game's history window |
 | `--game-settings <game>` (`--save-settings`) | open that game's settings (and save them at once - a profiles.ini round-trip check) |
+| `--tweak-roundtrip` (test copies only) | apply the invisible session tweaks (mouse acceleration, Sticky Keys shortcuts, Game Mode, PCIe power saving) for a moment, undo them, and log every value |
 | `--overlay-demo` (with `--fps-self`) | show the in-game overlay over the app's own window (if it's on in settings) |
 | `OPTM_TEST_SYSTEM=1` | let a test copy change Windows-wide settings (launch priority, GPU, FSO) - use only with made-up test games |
 | `--feedback` (`--feedback-preview`) | open the feedback form (with its preview) |

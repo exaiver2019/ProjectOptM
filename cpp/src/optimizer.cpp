@@ -167,7 +167,8 @@ std::vector<std::string> Optimizer::Plan(const GameProfile& p) const {
     else if (On("standby")) l.push_back("RAM cleanup: once at launch");
     std::vector<std::string> extra;
     for (const char* id : { "timer", "io_priority", "mmcss", "explorer", "smt", "unpark", "cstate", "maxboost", "ws_trim",
-                            "dvr", "visual", "fso", "audio", "defender", "dwm" })
+                            "dvr", "visual", "fso", "audio", "defender", "dwm", "game_mode", "maintenance", "transparency",
+                            "keep_awake", "pcie_aspm", "mouse_accel", "hotkeys" })
         if (On(id)) extra.push_back(tweakset::Find(id)->name);
     if (!extra.empty()) l.push_back("Tweaks (" + tweakset::PresetFor(*data_, &p) + "): " + util::Join(extra, ", "));
     if (data_->fpsOn) l.push_back("FPS graph: on");
@@ -529,10 +530,11 @@ void Optimizer::SetAuto(bool on) {
 }
 
 // ============================================================ Tweaks page session tweaks
-void Optimizer::Backup(const std::string& b) {
-    if (b.empty()) return;
+bool Optimizer::Backup(const std::string& b) {
+    if (b.empty()) return false;   // nothing was changed
     data_->tweakBackups.push_back(b);
     data_->SaveConfig();   // saved right away so a crash can be undone on the next start
+    return true;
 }
 
 bool Optimizer::ForcePriority(const std::string& name, DWORD cls, const ProcessList& procs) {
@@ -598,6 +600,20 @@ void Optimizer::ApplySessionTweaks(const GameProfile& p, const ProcessList& proc
             if (!b.empty()) done.push_back("Defender skips " + util::Narrow(folder));
         }
     }
+    if (On("game_mode") && Backup(tweaks::SetRegDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\GameBar", L"AutoGameModeEnabled", 1)))
+        done.push_back("Game Mode on");
+    if (On("maintenance")) {
+        std::string b = tweaks::SetRegDword(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\Maintenance", L"MaintenanceDisabled", 1);
+        if (Backup(b)) done.push_back("automatic maintenance paused");
+    }
+    if (On("transparency") && Backup(tweaks::SetTransparency(false))) done.push_back("transparency off");
+    if (On("keep_awake")) {   // this thread keeps the PC and screen awake until the session ends
+        awake_ = SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) != 0;
+        if (awake_) done.push_back("screen kept awake");
+    }
+    if (On("pcie_aspm") && Backup(tweaks::SetPowerValue(tweaks::kSubPciExpress, tweaks::kLinkStatePower, 0))) done.push_back("PCIe power saving off");
+    if (On("mouse_accel") && Backup(tweaks::SetMouseAcceleration(false))) done.push_back("mouse acceleration off");
+    if (On("hotkeys") && Backup(tweaks::SetAccessibilityHotkeys(false))) done.push_back("Sticky/Filter Keys shortcuts off");
     if (On("ws_trim")) trimAt_ = Now() + 60000;
     if (On("power_mode")) {
         std::string b = tweaks::SetPowerMode(true);
@@ -609,6 +625,7 @@ void Optimizer::ApplySessionTweaks(const GameProfile& p, const ProcessList& proc
 
 void Optimizer::RevertSessionTweaks() {
     if (timerOn_) { tweaks::SetTimerResolution(false); timerOn_ = false; }
+    if (awake_) { SetThreadExecutionState(ES_CONTINUOUS); awake_ = false; }
     trimAt_ = 0;
     if (data_->tweakBackups.empty()) return;
     ProcessList procs;

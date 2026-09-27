@@ -39,6 +39,9 @@ std::string SetPowerValue(const GUID& sub, const GUID& setting, DWORD value);   
 std::string SetVisualEffects(bool on);
 std::string AddDefenderExclusion(const std::wstring& folder);
 std::string SetPowerMode(bool bestPerformance);          // Settings > System > Power > Power mode
+std::string SetTransparency(bool on);                    // Settings > Personalization > Colors > Transparency effects
+std::string SetMouseAcceleration(bool on);               // "Enhance pointer precision"
+std::string SetAccessibilityHotkeys(bool on);            // Shift x5 (Sticky Keys), hold Shift (Filter Keys), hold Num Lock (Toggle Keys)
 void Restore(const std::string& backup);
 
 bool SetTimerResolution(bool fine);                     // 0.5 ms while fine = true
@@ -48,5 +51,6 @@ bool EnableGlobalTimerRequests();                       // Windows 11: lets it a
 bool SetFullscreenOptimizationsOff(const std::wstring& exePath, bool off);   // true if changed
 
 extern const GUID kSubProcessor, kCoreParkingMin, kIdleDisable, kBoostMode, kEnergyPref;
+extern const GUID kSubPciExpress, kLinkStatePower;
 
 }  // namespace tweaks

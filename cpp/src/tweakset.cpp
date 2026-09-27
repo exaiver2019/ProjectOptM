@@ -36,6 +36,9 @@ const std::vector<Tweak>& All() {
         { "fso",         "System", "Fullscreen optimizations off", "Per-game exclusive fullscreen behavior", "Next launch", 1 },
         { "audio",       "System", "Low-latency audio",  "Runs the Windows audio engine at High priority", "", 1 },
         { "defender",    "System", "Defender exclusion", "Skips scanning the game folder while playing", "Security trade-off", 3 },
+        { "game_mode",   "System", "Game Mode on",       "Makes sure Windows' own Game Mode is on while you play", "", 0 },
+        { "maintenance", "System", "Pause maintenance",  "Windows' automatic maintenance can't start mid-game", "", 0 },
+        { "transparency","System", "Transparency off",   "Turns off the blur behind the taskbar and Start while you play", "", 1 },
         // ---- GPU
         { "gpu_lock",    "GPU", "Dedicated GPU lock",    "Games always use your graphics card, not integrated graphics", "", 0 },
         { "vendor_apps", "GPU", "GPU maker apps low",    "Radeon Software, NVIDIA app or Intel Graphics Software run at low priority", "", 0 },
@@ -45,6 +48,11 @@ const std::vector<Tweak>& All() {
         { "ecoqos",      "Power", "Power throttling off", "Stops EcoQoS from slowing the game down", "", 0 },
         { "bg_eco",      "Power", "Background efficiency mode", "Background apps run in Windows efficiency mode while you play", "", 1 },
         { "power_mode",  "Power", "Best performance power mode", "Laptops: Windows power mode set to Best performance while you play", "", 1 },
+        { "keep_awake",  "Power", "Keep screen awake",   "The PC won't sleep or turn the screen off while you play", "", 0 },
+        { "pcie_aspm",   "Power", "PCIe power saving off", "Your graphics card's PCIe link doesn't drop into power saving mid-game", "More power", 1 },
+        // ---- Input
+        { "hotkeys",     "Input", "Sticky Keys pop-ups off", "Pressing Shift five times (or holding it) doesn't pop up a dialog mid-game", "", 1 },
+        { "mouse_accel", "Input", "Mouse acceleration off", "Turns off Enhance pointer precision, so the same hand movement always turns the same amount", "Changes aim feel", 3 },
     };
     return list;
 }
@@ -186,6 +194,34 @@ const Details& DetailsOf(const std::string& id) {
             "Tells Windows never to put the game in efficiency mode (EcoQoS power throttling).",
             "Windows can't slow the game down when it's in the background or on a second screen.",
             "Slightly more power use when the game is in the background. Not used for anti-cheat games." } },
+        { "game_mode", {
+            "Turns on Windows' Game Mode (Settings > Gaming > Game Mode) while you play, if it was off, and puts your setting back afterwards.",
+            "Game Mode gives the game priority for CPU and GPU time and holds back Windows Update restarts and driver installs while you play.",
+            "Almost none - it's on by default in Windows 10 and 11, so this only matters if it was turned off." } },
+        { "maintenance", {
+            "Pauses Windows' Automatic Maintenance while you play. It normally runs when the PC looks idle - which can be during a long controller session.",
+            "Disk optimization, system scans and cleanup jobs can't start in the middle of a match and cause disk activity or stutter.",
+            "Maintenance simply runs later, after the game closes. Needs admin." } },
+        { "transparency", {
+            "Turns off Transparency effects (the frosted-glass blur on the taskbar, Start and some windows) while you play.",
+            "The desktop compositor does a little less work - most noticeable in windowed or borderless games on weaker GPUs.",
+            "Small gain on a fast GPU. The taskbar looks flat until the game closes." } },
+        { "keep_awake", {
+            "Tells Windows the PC is in use while a game runs, so it doesn't go to sleep or turn the screen off.",
+            "No black screen during long cutscenes or controller play, when Windows doesn't see keyboard or mouse input.",
+            "None while you play. Normal sleep timers come back when the game closes." } },
+        { "pcie_aspm", {
+            "Sets the power plan's PCI Express Link State Power Management to Off while you play.",
+            "The link to your graphics card never has to wake from a power-saving state, which can remove small hitches on some systems.",
+            "Slightly more power use while you play. Many desktops already have it off - then nothing changes." } },
+        { "hotkeys", {
+            "Turns off the keyboard shortcuts for Sticky Keys (Shift five times), Filter Keys (hold right Shift) and Toggle Keys (hold Num Lock) while you play.",
+            "Spamming Shift to sprint or crouch no longer pops up a dialog that pulls you out of the game.",
+            "The shortcuts come back when the game closes. If you use one of these features it's left on - only the shortcut is paused." } },
+        { "mouse_accel", {
+            "Turns off Enhance pointer precision (Windows' mouse acceleration) while you play.",
+            "The same hand movement always moves the same distance, however fast you move - what most FPS players want for consistent aim.",
+            "Changes how the mouse feels, so it's not in any preset. Most games that use raw input ignore it anyway." } },
     };
     static const Details none = { "", "", "" };
     auto it = d.find(id);
@@ -193,7 +229,7 @@ const Details& DetailsOf(const std::string& id) {
 }
 
 const std::vector<const char*>& Categories() {
-    static const std::vector<const char*> c = { "CPU", "Memory", "System", "GPU", "Power" };
+    static const std::vector<const char*> c = { "CPU", "Memory", "System", "GPU", "Power", "Input" };
     return c;
 }
 

@@ -186,6 +186,8 @@ const GUID kCoreParkingMin = { 0x0cc5b647, 0xc1df, 0x4637, { 0x89, 0x1a, 0xde, 0
 const GUID kIdleDisable    = { 0x5d76a2ca, 0xe8c0, 0x402f, { 0xa1, 0x33, 0x21, 0x58, 0x49, 0x2d, 0x58, 0xad } };
 const GUID kBoostMode      = { 0xbe337238, 0x0d82, 0x4146, { 0xa9, 0x60, 0x4f, 0x37, 0x49, 0xd4, 0x70, 0xc7 } };
 const GUID kEnergyPref     = { 0x36687f9e, 0xe3a5, 0x4dbf, { 0xb1, 0xdc, 0x15, 0xeb, 0x38, 0x1c, 0x68, 0x63 } };
+const GUID kSubPciExpress  = { 0x501a4d13, 0x42af, 0x4429, { 0x9f, 0xd1, 0xa8, 0x21, 0x8c, 0x26, 0x8e, 0x20 } };
+const GUID kLinkStatePower = { 0xee12f906, 0xd277, 0x404b, { 0xb6, 0xda, 0xe5, 0xfa, 0x1a, 0x57, 0x6d, 0xf5 } };   // ASPM: 0 off
 
 namespace {
 const char kSep = '|';
@@ -272,6 +274,54 @@ std::string SetVisualEffects(bool on) {
     return "V|" + std::to_string(client ? 1 : 0) + "|" + std::to_string(ai.iMinAnimate ? 1 : 0);
 }
 
+namespace {
+const wchar_t* kPersonalize = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+void ThemeChanged() {   // Explorer and the taskbar re-read the setting
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"ImmersiveColorSet", SMTO_ABORTIFHUNG, 1000, nullptr);
+}
+}  // namespace
+
+std::string SetTransparency(bool on) {
+    std::string b = SetRegDword(HKEY_CURRENT_USER, kPersonalize, L"EnableTransparency", on ? 1 : 0);
+    if (!b.empty()) ThemeChanged();
+    return b;
+}
+
+// Like the animations: no SPIF_UPDATEINIFILE, so it only lasts until sign-out even if we crash
+std::string SetMouseAcceleration(bool on) {
+    int m[3] = {};   // threshold 1, threshold 2, acceleration (0 = "Enhance pointer precision" off)
+    if (!SystemParametersInfoW(SPI_GETMOUSE, 0, m, 0)) return "";
+    if ((m[2] != 0) == on) return "";
+    int set[3] = { on ? 6 : 0, on ? 10 : 0, on ? 1 : 0 };
+    if (!SystemParametersInfoW(SPI_SETMOUSE, 0, set, SPIF_SENDCHANGE)) return "";
+    return "M|" + std::to_string(m[0]) + "|" + std::to_string(m[1]) + "|" + std::to_string(m[2]);
+}
+
+std::string SetAccessibilityHotkeys(bool on) {
+    STICKYKEYS sk = { sizeof(sk) };
+    FILTERKEYS fk = { sizeof(fk) };
+    TOGGLEKEYS tk = { sizeof(tk) };
+    SystemParametersInfoW(SPI_GETSTICKYKEYS, sizeof(sk), &sk, 0);
+    SystemParametersInfoW(SPI_GETFILTERKEYS, sizeof(fk), &fk, 0);
+    SystemParametersInfoW(SPI_GETTOGGLEKEYS, sizeof(tk), &tk, 0);
+    std::string b = "K|" + std::to_string(sk.dwFlags) + "|" + std::to_string(fk.dwFlags) + "|" + std::to_string(tk.dwFlags);
+    bool changed = false;
+    // only the shortcuts that pop up a dialog - a feature you've actually turned on is left alone
+    auto hotkey = [&](DWORD& flags, DWORD featureOn, DWORD hotkeyBit) {
+        if (flags & featureOn) return;
+        DWORD want = on ? (flags | hotkeyBit) : (flags & ~hotkeyBit);
+        if (want != flags) { flags = want; changed = true; }
+    };
+    hotkey(sk.dwFlags, SKF_STICKYKEYSON, SKF_HOTKEYACTIVE);
+    hotkey(fk.dwFlags, FKF_FILTERKEYSON, FKF_HOTKEYACTIVE);
+    hotkey(tk.dwFlags, TKF_TOGGLEKEYSON, TKF_HOTKEYACTIVE);
+    if (!changed) return "";
+    SystemParametersInfoW(SPI_SETSTICKYKEYS, sizeof(sk), &sk, SPIF_SENDCHANGE);
+    SystemParametersInfoW(SPI_SETFILTERKEYS, sizeof(fk), &fk, SPIF_SENDCHANGE);
+    SystemParametersInfoW(SPI_SETTOGGLEKEYS, sizeof(tk), &tk, SPIF_SENDCHANGE);
+    return b;
+}
+
 std::string AddDefenderExclusion(const std::wstring& folder) {
     std::wstring q = PsQuote(folder);
     int rc = RunPowerShell(L"if ((Get-MpPreference).ExclusionPath -contains " + q + L") { exit 3 }; Add-MpPreference -ExclusionPath " + q + L"; exit 0");
@@ -315,6 +365,7 @@ void Restore(const std::string& b) {
             std::wstring s = util::Widen(f[5]);
             RegSetKeyValueW(root, key.c_str(), value.c_str(), REG_SZ, s.c_str(), (DWORD)((s.size() + 1) * sizeof(wchar_t)));
         }
+        if (key == kPersonalize) ThemeChanged();
     } else if (t == "P" && f.size() >= 5) {
         GUID scheme = GuidOf(f[1]), sub = GuidOf(f[2]), setting = GuidOf(f[3]);
         PowerWriteACValueIndex(nullptr, &scheme, &sub, &setting, (DWORD)strtoul(f[4].c_str(), nullptr, 10));
@@ -323,6 +374,20 @@ void Restore(const std::string& b) {
         SystemParametersInfoW(SPI_SETCLIENTAREAANIMATION, 0, (PVOID)(INT_PTR)(f[1] == "1" ? TRUE : FALSE), SPIF_SENDCHANGE);
         ANIMATIONINFO ai = { sizeof(ai), f[2] == "1" ? 1 : 0 };
         SystemParametersInfoW(SPI_SETANIMATION, sizeof(ai), &ai, SPIF_SENDCHANGE);
+    } else if (t == "M" && f.size() >= 4) {
+        int m[3] = { atoi(f[1].c_str()), atoi(f[2].c_str()), atoi(f[3].c_str()) };
+        SystemParametersInfoW(SPI_SETMOUSE, 0, m, SPIF_SENDCHANGE);
+    } else if (t == "K" && f.size() >= 4) {
+        STICKYKEYS sk = { sizeof(sk) }; FILTERKEYS fk = { sizeof(fk) }; TOGGLEKEYS tk = { sizeof(tk) };
+        SystemParametersInfoW(SPI_GETSTICKYKEYS, sizeof(sk), &sk, 0);
+        SystemParametersInfoW(SPI_GETFILTERKEYS, sizeof(fk), &fk, 0);
+        SystemParametersInfoW(SPI_GETTOGGLEKEYS, sizeof(tk), &tk, 0);
+        sk.dwFlags = strtoul(f[1].c_str(), nullptr, 10);
+        fk.dwFlags = strtoul(f[2].c_str(), nullptr, 10);
+        tk.dwFlags = strtoul(f[3].c_str(), nullptr, 10);
+        SystemParametersInfoW(SPI_SETSTICKYKEYS, sizeof(sk), &sk, SPIF_SENDCHANGE);
+        SystemParametersInfoW(SPI_SETFILTERKEYS, sizeof(fk), &fk, SPIF_SENDCHANGE);
+        SystemParametersInfoW(SPI_SETTOGGLEKEYS, sizeof(tk), &tk, SPIF_SENDCHANGE);
     } else if (t == "O" && f.size() >= 2) {
         if (SetOverlay()) SetOverlay()(GuidOf(f[1]));
     } else if (t == "X" && f.size() >= 2) {

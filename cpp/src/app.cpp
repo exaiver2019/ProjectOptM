@@ -14,6 +14,7 @@
 #include <ctime>
 #include <filesystem>
 #include <map>
+#include <powrprof.h>
 #include <shlobj.h>
 
 namespace {
@@ -181,6 +182,32 @@ void App::Init(HWND hwnd, float dpiScale) {
         if (fbLog_) for (int i = 0; i < 30; i++) strncat_s(fbDetails_, " A long report line that pushes the link past GitHub's limit.", _TRUNCATE);
         SendFeedback();
         Log("Feedback status: " + fbStatus_);
+    }
+    // developer check (test copies only): apply the invisible session tweaks for a moment, undo them, log every value
+    if (cmd.find("--tweak-roundtrip") != std::string::npos && !util::EnvVar(L"OPTM_DATA_DIR").empty()) {
+        auto state = [] {
+            int m[3] = {}; SystemParametersInfoW(SPI_GETMOUSE, 0, m, 0);
+            STICKYKEYS sk = { sizeof(sk) }; SystemParametersInfoW(SPI_GETSTICKYKEYS, sizeof(sk), &sk, 0);
+            FILTERKEYS fk = { sizeof(fk) }; SystemParametersInfoW(SPI_GETFILTERKEYS, sizeof(fk), &fk, 0);
+            TOGGLEKEYS tk = { sizeof(tk) }; SystemParametersInfoW(SPI_GETTOGGLEKEYS, sizeof(tk), &tk, 0);
+            DWORD gm = 99; util::RegDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\GameBar", L"AutoGameModeEnabled", gm);
+            GUID* s = nullptr; DWORD aspm = 99;
+            if (PowerGetActiveScheme(nullptr, &s) == ERROR_SUCCESS) { PowerReadACValueIndex(nullptr, s, &tweaks::kSubPciExpress, &tweaks::kLinkStatePower, &aspm); LocalFree(s); }
+            char b[160];
+            snprintf(b, sizeof(b), "mouse %d/%d/%d  sticky %lu filter %lu toggle %lu  gamemode %lu  aspm %lu",
+                     m[0], m[1], m[2], sk.dwFlags, fk.dwFlags, tk.dwFlags, gm, aspm);
+            return std::string(b);
+        };
+        Log("roundtrip before: " + state());
+        std::string hk = tweaks::SetAccessibilityHotkeys(false);
+        if (hk.empty()) hk = tweaks::SetAccessibilityHotkeys(true);   // already off here: test the other way round
+        std::vector<std::string> b = { tweaks::SetMouseAcceleration(false), hk,
+                                       tweaks::SetRegDword(HKEY_CURRENT_USER, L"Software\\Microsoft\\GameBar", L"AutoGameModeEnabled", 1),
+                                       tweaks::SetPowerValue(tweaks::kSubPciExpress, tweaks::kLinkStatePower, 0) };
+        Log("roundtrip during: " + state());
+        for (auto& x : b) Log("roundtrip backup: " + (x.empty() ? std::string("(already so - nothing changed)") : x));
+        for (auto it = b.rbegin(); it != b.rend(); ++it) if (!it->empty()) tweaks::Restore(*it);
+        Log("roundtrip after:  " + state());
     }
     // first start of this version: show the welcome tour (not in screenshot test runs)
     if (!data_.tourDone && tourStep_ < 0 && cmd.find("--screenshot") == std::string::npos) StartTour();
@@ -2685,6 +2712,7 @@ unsigned CategoryIcon(const std::string& c) {
     if (c == "Memory") return 0xE964;
     if (c == "System") return 0xE7F4;
     if (c == "GPU") return 0xE945;
+    if (c == "Input") return 0xE962;   // mouse
     return 0xE83E;   // Power
 }
 bool Matches(const tweakset::Tweak& t, const std::string& q) {
@@ -3073,6 +3101,7 @@ void App::PageTweaks() {
     ImGui::BeginChild("tweaksL", ImVec2(colW, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
     card("CPU");
     card("Power");
+    card("Input");
     ImGui::EndChild();
     ImGui::SameLine(0, 14 * s_);
     ImGui::BeginChild("tweaksR", ImVec2(colW, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
