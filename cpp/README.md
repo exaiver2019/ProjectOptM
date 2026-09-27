@@ -128,8 +128,9 @@ again when the app starts. Restarting into a new build doesn't revert them.
 ## In-game overlay
 
 The **Overlay** page (or Ctrl+Alt+O) shows FPS and any of: 1% low,
-frametime, a mini frametime graph (last 4 s, spikes in amber), GPU usage + temperature, VRAM, CPU usage, RAM -
-4 times a second. Its spot is set in the page's **Position** card: a picture of your screen (its real shape,
+frametime, a mini frametime graph (last 4 s, spikes in amber), GPU usage + temperature, VRAM, CPU usage, RAM.
+**Update speed**: 2 / 4 / 10 / 20 redraws a second (default 10, about 1% of one core; 20 is about 3%). The main
+loop wakes for each redraw even from the tray (App::MaxWaitMs) without redrawing the app window itself. Its spot is set in the page's **Position** card: a picture of your screen (its real shape,
 the game's monitor while one runs) with the overlay drawn at its real size - drag it, click anywhere to move it
 there, or snap to a corner. Saved as 0..1 across the screen, so it lands in the same place on any monitor. Background opacity 0-100%
 (0 = outlined text only) and size 70-160%.
