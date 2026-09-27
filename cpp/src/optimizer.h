@@ -76,6 +76,7 @@ private:
     void RevertSessionTweaks();
     void Backup(const std::string& b);
     bool AnyGameUses(const std::string& tweakId) const;
+    bool SystemWide() const;       // false in a test copy: launch priority / GPU / FSO are left alone
     void RestoreGpuPreferences();
     bool ForcePriority(const std::string& name, DWORD cls, const ProcessList& procs);   // bypasses the protected list
 

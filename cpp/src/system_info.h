@@ -10,6 +10,8 @@ struct GpuInfo {
     std::string name;
     std::string vendor;      // "AMD" / "NVIDIA" / "Intel" / "Other"
     uint64_t    vramBytes = 0;
+    uint32_t    luidLow = 0;     // the adapter's LUID - how Windows' GPU counters name it
+    int32_t     luidHigh = 0;
 };
 
 struct SystemInfo {

@@ -121,10 +121,18 @@ again when the app starts. Restarting into a new build doesn't revert them.
 
 ## In-game overlay
 
-Settings > **In-game overlay** (or Overlay on the Home page, or Ctrl+Alt+O) shows FPS, 1% low, frametime
-and a mini frametime graph (last 4 s, spikes in amber) in a corner of the game's monitor, 4 times a second.
-It's a small GDI window - `WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
-WS_EX_TOOLWINDOW` - re-asserted topmost every second, so it never takes focus or clicks and isn't in Alt+Tab.
+Settings > **In-game overlay** (or Overlay on the Home page, or Ctrl+Alt+O) shows FPS and any of: 1% low,
+frametime, a mini frametime graph (last 4 s, spikes in amber), GPU usage + temperature, VRAM, CPU usage, RAM -
+4 times a second. **Move overlay** makes it draggable (double-click or Done moving to finish); its spot is
+saved as 0..1 across the screen, so it lands in the same place on any monitor. Background opacity 0-100%
+(0 = outlined text only) and size 70-160%.
+It's a GDI+ layered window with per-pixel alpha (`UpdateLayeredWindow`) - `WS_EX_TOPMOST | WS_EX_LAYERED |
+WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`, re-asserted topmost every second, so it never takes
+focus or clicks (except while moving) and isn't in Alt+Tab.
+Readings (src/sensors.*, a background thread, once a second, only while shown): GPU usage and VRAM from the
+`GPU Engine` / `GPU Adapter Memory` performance counters for the main GPU's LUID (Task Manager's method), GPU
+temperature from `D3DKMTQueryAdapterInfo(ADAPTERPERFDATA)` when the driver reports it, CPU from
+`% Processor Utility`, RAM from `GlobalMemoryStatusEx`.
 Nothing is injected into the game (unlike RTSS/Afterburner, which hook Present - anti-cheat risk). The
 trade-off: it only shows over windowed, borderless and flip-model "fullscreen" games, not true exclusive
 fullscreen. It shows only while the game window is in front, hides when FPS capture is blocked, and by
@@ -192,6 +200,8 @@ Handy for testing without touching your real setup:
 | `--history <game>` | open that game's history window |
 | `--game-settings <game>` (`--save-settings`) | open that game's settings (and save them at once - a profiles.ini round-trip check) |
 | `--overlay-demo` (with `--fps-self`) | show the in-game overlay over the app's own window (if it's on in settings) |
+| `--overlay-move` | start with the overlay in move mode |
+| `OPTM_TEST_SYSTEM=1` | let a test copy change Windows-wide settings (launch priority, GPU, FSO) - use only with made-up test games |
 | `--feedback` (`--feedback-preview`) | open the feedback form (with its preview) |
 | `OPTM_FEEDBACK_TEST=<title>` | build a feedback link at start and log it instead of opening it (`--feedback-long` tests the clipboard path) |
 | `OPTM_UPDATE_AS=<version>` | pretend to be an older version when checking for updates |

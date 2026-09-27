@@ -481,8 +481,18 @@ void AppData::LoadConfig() {
     revertOnExit = j["RevertOnExit"].AsBool(true);
     const Json& ov = j["Overlay"];
     overlayOn = ov["On"].AsBool(false);
-    overlayCorner = ov["Corner"].type == Json::Number ? std::clamp((int)ov["Corner"].num, 0, 3) : 0;
-    overlayGraph = ov["Graph"].AsBool(true);
+    if (ov["X"].type == Json::Number && ov["Y"].type == Json::Number) {
+        overlayX = std::clamp(ov["X"].num, 0.0, 1.0);
+        overlayY = std::clamp(ov["Y"].num, 0.0, 1.0);
+    } else {   // 2.1 test builds kept a corner (0 top-left ... 3 bottom-right)
+        int corner = ov["Corner"].type == Json::Number ? std::clamp((int)ov["Corner"].num, 0, 3) : 0;
+        overlayX = (corner == 1 || corner == 3) ? 1 : 0;
+        overlayY = corner >= 2 ? 1 : 0;
+    }
+    if (ov["Opacity"].type == Json::Number) overlayOpacity = std::clamp((int)ov["Opacity"].num, 0, 100);
+    if (ov["Size"].type == Json::Number) overlaySize = std::clamp((int)ov["Size"].num, 70, 200);
+    if (ov["Items"].type == Json::Array) overlayItems = ov["Items"].AsStrings();
+    else if (!ov["Graph"].AsBool(true)) overlayItems = { "low", "frametime" };
     overlayAntiCheat = ov["AntiCheat"].AsBool(false);
     restorePlan = j["RestorePlan"].AsString();
     pausedServices = j["PausedSvcs"].AsStrings();
@@ -508,8 +518,11 @@ void AppData::SaveConfig() const {
     j.obj["RevertOnExit"] = Json::Boolean(revertOnExit);
     Json ov = Json::Obj();
     ov.obj["On"] = Json::Boolean(overlayOn);
-    ov.obj["Corner"] = Json::Num(overlayCorner);
-    ov.obj["Graph"] = Json::Boolean(overlayGraph);
+    ov.obj["X"] = Json::Num(overlayX);
+    ov.obj["Y"] = Json::Num(overlayY);
+    ov.obj["Opacity"] = Json::Num(overlayOpacity);
+    ov.obj["Size"] = Json::Num(overlaySize);
+    ov.obj["Items"] = Json::StrList(overlayItems);
     ov.obj["AntiCheat"] = Json::Boolean(overlayAntiCheat);
     j.obj["Overlay"] = ov;
     j.obj["RestorePlan"] = restorePlan.empty() ? Json() : Json::Str(restorePlan);

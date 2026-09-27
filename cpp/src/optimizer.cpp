@@ -626,6 +626,12 @@ void Optimizer::RevertSessionTweaks() {
     data_->SaveConfig();
 }
 
+// A test copy (its own data folder) must never change Windows-wide settings from its sandbox profiles -
+// unless a test asks for it (OPTM_TEST_SYSTEM=1, used with a made-up test game)
+bool Optimizer::SystemWide() const {
+    return util::EnvVar(L"OPTM_DATA_DIR").empty() || !util::EnvVar(L"OPTM_TEST_SYSTEM").empty();
+}
+
 bool Optimizer::AnyGameUses(const std::string& id) const {
     if (tweakset::Active(*data_, *sys_).count(id)) return true;
     for (auto& p : data_->profiles) if (tweakset::Active(*data_, *sys_, &p).count(id)) return true;
@@ -633,6 +639,7 @@ bool Optimizer::AnyGameUses(const std::string& id) const {
 }
 
 void Optimizer::SyncPerGameSettings() {
+    if (!SystemWide()) return;
     if (!data_->fsoManaged.empty() && !AnyGameUses("fso")) {
         for (auto& path : data_->fsoManaged) tweaks::SetFullscreenOptimizationsOff(util::Widen(path), false);
         log_("Fullscreen optimizations turned back on for " + std::to_string(data_->fsoManaged.size()) + " game(s)");
@@ -657,6 +664,7 @@ void Optimizer::RestoreGpuPreferences() {
 // Exiting: the settings Windows applies at a game's next launch go back too (the lists are kept,
 // so the next start sets them again)
 void Optimizer::RevertOnExit() {
+    if (!SystemWide()) return;
     std::vector<std::string> left;
     for (auto& exe : data_->ifeoManaged) {
         tweaks::RemoveLaunchPriority(exe);
@@ -674,6 +682,7 @@ void Optimizer::RevertOnExit() {
 }
 
 void Optimizer::ReapplyAtStart() {
+    if (!SystemWide()) return;
     int n = 0;
     if (AnyGameUses("fso"))
         for (auto& path : data_->fsoManaged) if (tweaks::SetFullscreenOptimizationsOff(util::Widen(path), true)) n++;
@@ -693,6 +702,7 @@ void Optimizer::RecoverLastRun() {
 }
 
 void Optimizer::SyncLaunchPriority() {
+    if (!SystemWide()) return;
     std::map<std::string, std::string> want;   // lower-case "game.exe" -> priority
     std::map<std::string, std::string> spelled;
     for (auto& p : data_->profiles)

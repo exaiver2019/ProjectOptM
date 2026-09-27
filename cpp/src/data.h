@@ -80,8 +80,10 @@ struct AppData {
     bool revertOnExit = true;                          // exiting also removes launch priority / GPU / FSO settings
     // in-game FPS overlay (a click-through window above the game - nothing is loaded into the game)
     bool overlayOn = false;
-    int overlayCorner = 0;                             // 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right
-    bool overlayGraph = true;                          // mini frametime graph under the numbers
+    double overlayX = 0, overlayY = 0;                 // where it sits: 0 = left/top edge ... 1 = right/bottom edge of the screen
+    int overlayOpacity = 85;                           // background, percent (0 = see-through, text only)
+    int overlaySize = 100;                             // percent
+    std::vector<std::string> overlayItems = { "low", "frametime", "graph" };   // shown under the FPS (see OverlayItems in app.cpp)
     bool overlayAntiCheat = false;                     // also over anti-cheat games (off: their anti-cheat might not like it)
     std::string restorePlan;                           // power plan to go back to (crash recovery)
     std::vector<std::string> pausedServices;           // services to restart (crash recovery)

@@ -13,6 +13,7 @@
 #include "imgui.h"
 #include "optimizer.h"
 #include "overlay.h"
+#include "sensors.h"
 #include "processes.h"
 #include "system_info.h"
 #include "updater.h"
@@ -183,6 +184,7 @@ private:
 
     // in-game overlay
     Overlay overlay_;
+    Sensors sensors_;              // GPU / VRAM / CPU / RAM readings for it
     HWND gameWnd_ = nullptr;
     uint64_t lastOverlay_ = 0, lastGameWnd_ = 0;
     bool overlayHotkey_ = false;

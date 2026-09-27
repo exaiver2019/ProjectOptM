@@ -140,6 +140,8 @@ void DetectGpus(SystemInfo& si) {
             GpuInfo g;
             g.name = util::Trim(util::Narrow(d.Description));
             g.vramBytes = d.DedicatedVideoMemory;
+            g.luidLow = d.AdapterLuid.LowPart;
+            g.luidHigh = d.AdapterLuid.HighPart;
             g.vendor = d.VendorId == 0x1002 ? "AMD" : d.VendorId == 0x10DE ? "NVIDIA" : d.VendorId == 0x8086 ? "Intel" : "Other";
             bool dup = std::any_of(si.gpus.begin(), si.gpus.end(), [&](const GpuInfo& x) { return x.name == g.name; });
             if (!dup) si.gpus.push_back(g);

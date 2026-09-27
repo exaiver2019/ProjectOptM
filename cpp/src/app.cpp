@@ -131,8 +131,10 @@ void App::Init(HWND hwnd, float dpiScale) {
                     : "Panic hotkey Ctrl+Alt+End is used by another app - use the tray menu instead");
     }
     overlay_.Create(GetModuleHandleW(nullptr));
+    if (!sys_.gpus.empty()) sensors_.Start(sys_.gpus[0].luidLow, sys_.gpus[0].luidHigh, sys_.gpus[0].vramBytes);
     overlayHotkey_ = RegisterHotKey(hwnd_, kHotkeyOverlay, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O') != 0;
     overlayDemo_ = cmd.find("--overlay-demo") != std::string::npos;
+    if (cmd.find("--overlay-move") != std::string::npos) overlay_.SetMoving(true);   // developer check: move mode
     RefreshChecks();
     int warns = (int)std::count_if(checks_.begin(), checks_.end(), [](const Check& c) { return c.state == Check::Warn; });
     if (warns) Log(std::to_string(warns) + " system check(s) need attention - click the outlined chips on the System page to fix");
@@ -483,6 +485,7 @@ void App::Shutdown() {
     if (hotkey_) UnregisterHotKey(hwnd_, kHotkeyPanic);
     if (overlayHotkey_) UnregisterHotKey(hwnd_, kHotkeyOverlay);
     overlay_.Destroy();
+    sensors_.Stop();
     opt_.EndSession();
     // fully closing (not restarting into a new build): the per-game Windows settings go back too
     if (data_.revertOnExit && !restart_) opt_.RevertOnExit();
@@ -582,13 +585,31 @@ HWND App::GameWindow() {
     return gameWnd_;
 }
 
+namespace {
+// what the overlay can show under the FPS, in order (ids are kept in settings.json "Overlay" > "Items")
+const std::pair<const char*, const char*> kOverlayItems[] = {
+    { "low", "1% low" }, { "frametime", "Frametime" }, { "graph", "Frametime graph" },
+    { "gpu", "GPU usage" }, { "gputemp", "GPU temp" }, { "vram", "VRAM" }, { "cpu", "CPU usage" }, { "ram", "RAM" },
+};
+std::wstring Num(double v, const wchar_t* fmt) { wchar_t b[48]; swprintf(b, 48, fmt, v); return b; }
+}
+
 void App::UpdateOverlay() {
     uint64_t now = Ms();
     if (now - lastOverlay_ < 250) return;   // 4 updates a second, like Afterburner's
     lastOverlay_ = now;
+    // move mode: double-click ends it; wherever it was dropped is saved
+    if (overlay_.TakeDone()) { overlay_.SetMoving(false); Log("Overlay position saved"); }
+    double fx, fy;
+    if (overlay_.TakeMoved(fx, fy)) { data_.overlayX = fx; data_.overlayY = fy; data_.SaveConfig(); }
+
     HWND game = nullptr;
     bool want = false;
-    if (overlayDemo_) { game = hwnd_; want = data_.overlayOn; }
+    if (overlay_.Moving()) {   // shown for placing, over the game if one's running, else on this window's screen
+        game = opt_.Active() ? GameWindow() : nullptr;
+        if (!game) game = hwnd_;
+        want = true;
+    } else if (overlayDemo_) { game = hwnd_; want = data_.overlayOn; }
     else if (const GameProfile* g = opt_.Active()) {
         want = data_.overlayOn && data_.fpsOn && !frames_.Blocked() && (!g->antiCheat || data_.overlayAntiCheat);
         if (want) {
@@ -600,18 +621,34 @@ void App::UpdateOverlay() {
             want = game && !IsIconic(game) && fg == gp;
         }
     }
+    auto has = [&](const char* id) { return util::Contains(data_.overlayItems, id); };
+    sensors_.SetActive(want && (has("gpu") || has("gputemp") || has("vram") || has("cpu") || has("ram")));
     if (!want) { overlay_.Hide(); return; }
+
     const auto& buf = frames_.Buffer();
     frames::Live st = frames::Stats(buf);
+    Readings rd = sensors_.Get();
     OverlayContent c;
     c.hasFps = buf.size() >= 10;
     c.fps = st.fps;
-    c.low1 = st.low1;
-    c.frametime = st.frametime;
-    c.showGraph = data_.overlayGraph;
+    const std::wstring none = L"--";
+    if (has("low")) c.stats.push_back({ L"1% low", c.hasFps && st.low1 > 0 ? Num(st.low1, L"%.0f") : none });
+    if (has("frametime")) c.stats.push_back({ L"Frame", c.hasFps ? Num(st.frametime, L"%.1f ms") : none });
+    if (has("gpu") || has("gputemp")) {
+        std::wstring v;
+        if (has("gpu")) v = rd.gpuPct >= 0 ? Num(rd.gpuPct, L"%.0f%%") : none;
+        if (has("gputemp") && rd.gpuTempC >= 0) v += (v.empty() ? L"" : L"  ") + Num(rd.gpuTempC, L"%.0f°C");
+        else if (has("gputemp") && v.empty()) v = none;
+        c.stats.push_back({ L"GPU", v });
+    }
+    if (has("vram")) c.stats.push_back({ L"VRAM", rd.vramUsedGB >= 0 ? Num(rd.vramUsedGB, L"%.1f") + Num(rd.vramTotalGB, L"/%.0f GB") : none });
+    if (has("cpu")) c.stats.push_back({ L"CPU", rd.cpuPct >= 0 ? Num(rd.cpuPct, L"%.0f%%") : none });
+    if (has("ram")) c.stats.push_back({ L"RAM", rd.ramUsedGB >= 0 ? Num(rd.ramUsedGB, L"%.1f") + Num(rd.ramTotalGB, L"/%.0f GB") : none });
+    c.showGraph = has("graph");
     if (c.showGraph) c.graph = frames::Columns(buf, 4000, 64);
     c.accent = RGB((int)(g_accent.x * 255), (int)(g_accent.y * 255), (int)(g_accent.z * 255));
-    overlay_.Show(game, data_.overlayCorner, Zoom(), c);
+    c.opacity = data_.overlayOpacity;
+    overlay_.Show(game, data_.overlayX, data_.overlayY, Zoom() * data_.overlaySize / 100.0f, c);
 }
 
 void App::OnActivate() { if (Ms() - lastChecks_ >= 10000) RefreshChecks(); }
@@ -2365,10 +2402,14 @@ void App::PageSettings() {
     ImGui::Dummy(ImVec2(0, 4 * s_));
     if (toggle(data_.overlayOn ? "Overlay: ON" : "Overlay: OFF", data_.overlayOn)) ToggleOverlay();
     ImGui::SameLine();
-    if (toggle(data_.overlayGraph ? "Frametime graph: ON" : "Frametime graph: OFF", data_.overlayGraph)) {
-        data_.overlayGraph = !data_.overlayGraph;
-        data_.SaveConfig();
+    bool moving = overlay_.Moving();
+    if (toggle(moving ? "Done moving" : "Move overlay", moving)) {
+        overlay_.SetMoving(!moving);
+        if (!moving) Log("Drag the overlay where you want it, then double-click it (or click Done moving)");
     }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Shows the overlay on your screen so you can drag it anywhere.\n"
+                          "Its spot is kept relative to the screen, so it lands in the same place in every game.");
     ImGui::SameLine();
     if (toggle(data_.overlayAntiCheat ? "Anti-cheat games: ON" : "Anti-cheat games: OFF", data_.overlayAntiCheat)) {
         data_.overlayAntiCheat = !data_.overlayAntiCheat;
@@ -2378,17 +2419,58 @@ void App::PageSettings() {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("The overlay is a separate window - nothing is loaded into the game - but some anti-cheats\n"
                           "watch for windows drawn over their game. Off (the default) keeps it hidden in those games.");
+    // what it shows
     ImGui::Dummy(ImVec2(0, 2 * s_));
-    ImGui::TextColored(kSub, "Corner");
+    ImGui::TextColored(kSub, "Show under the FPS");
+    for (size_t i = 0; i < sizeof(kOverlayItems) / sizeof(kOverlayItems[0]); i++) {
+        if (i) ImGui::SameLine();
+        if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(kOverlayItems[i].second).x + 30 * s_ > ImGui::GetContentRegionMax().x) ImGui::NewLine();
+        bool on = util::Contains(data_.overlayItems, kOverlayItems[i].first);
+        if (toggle(kOverlayItems[i].second, on)) {
+            std::vector<std::string> items;   // kept in display order
+            for (auto& [id, label] : kOverlayItems)
+                if (id == std::string(kOverlayItems[i].first) ? !on : util::Contains(data_.overlayItems, id)) items.push_back(id);
+            data_.overlayItems = items;
+            data_.SaveConfig();
+        }
+    }
+    if (sys_.gpus.empty()) ImGui::TextColored(kDim, "No graphics card found - GPU and VRAM show --");
+
+    // look: background and size
+    ImGui::Dummy(ImVec2(0, 2 * s_));
+    float sw = 220 * s_;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kSub, "Background");
+    ImGui::SameLine(110 * s_);
+    ImGui::SetNextItemWidth(sw);
+    ImGui::SliderInt("##ovop", &data_.overlayOpacity, 0, 100, data_.overlayOpacity == 0 ? "See-through" : "%d%%");
+    if (ImGui::IsItemDeactivatedAfterEdit()) data_.SaveConfig();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0%% = no background, just outlined text over the game");
+    ImGui::SameLine(0, 24 * s_);
+    ImGui::TextColored(kSub, "Size");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(sw);
+    ImGui::SliderInt("##ovsize", &data_.overlaySize, 70, 160, "%d%%");
+    if (ImGui::IsItemDeactivatedAfterEdit()) data_.SaveConfig();
+
+    // where: drag it (Move overlay), or snap to a corner
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kSub, "Snap to");
+    ImGui::SameLine(110 * s_);
     const char* corners[] = { "Top left", "Top right", "Bottom left", "Bottom right" };
     for (int i = 0; i < 4; i++) {
         if (i) ImGui::SameLine();
-        if (toggle(corners[i], data_.overlayCorner == i)) { data_.overlayCorner = i; data_.SaveConfig(); }
+        double cx = (i == 1 || i == 3) ? 1 : 0, cy = i >= 2 ? 1 : 0;
+        if (toggle(corners[i], data_.overlayX == cx && data_.overlayY == cy)) {
+            data_.overlayX = cx; data_.overlayY = cy;
+            data_.SaveConfig();
+            if (overlay_.Moving()) { overlay_.SetMoving(false); overlay_.SetMoving(true); }   // jump there now
+        }
     }
     ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(kDim, "FPS, 1%% low and frametime in a corner of the game, while you're in it. %s shows or hides it. "
-                             "It's a separate click-through window (nothing is loaded into the game), so it shows over windowed, "
-                             "borderless and most modern fullscreen games, but not old exclusive fullscreen.",
+    ImGui::TextColored(kDim, "Shown while you're in the game. %s shows or hides it. It's a separate click-through window "
+                             "(nothing is loaded into the game), so it shows over windowed, borderless and most modern "
+                             "fullscreen games, but not old exclusive fullscreen. Temperature shows if your graphics driver reports it.",
                        overlayHotkey_ ? "Ctrl+Alt+O" : "The switch above (Ctrl+Alt+O is taken by another app)");
     ImGui::PopTextWrapPos();
     EndCard();
