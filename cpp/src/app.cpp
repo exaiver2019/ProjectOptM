@@ -1164,6 +1164,9 @@ void App::TourGo(int step) {
 
 void App::TourOverlay() {
     if (tourStep_ < 0) return;
+    // seen once = done: closing the app, an update restart or a crash mid-tour doesn't bring it back
+    // (Settings or About > Show the tour again replays it)
+    if (!data_.tourDone) { data_.tourDone = true; data_.SaveConfig(); }
     const TourStep& st = kTour[tourStep_];
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 disp = io.DisplaySize;
@@ -2931,7 +2934,7 @@ void App::PageSettings() {
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
     BeginCard("updates");
-    Label("UPDATES");
+    Label("UPDATES AND HELP");
     ImGui::Dummy(ImVec2(0, 2 * s_));
     std::string st = !updater_.Enabled() ? "Updates are off (no GitHub repo set in version.h)."
                    : !updater_.Status().empty() ? updater_.Status() : "Project OptM v" OPTM_VERSION " - updates come from github.com/" OPTM_UPDATE_REPO;
@@ -2941,6 +2944,8 @@ void App::PageSettings() {
     ImGui::SameLine();
     if (toggle(data_.autoUpdate ? "Auto-check: ON" : "Auto-check: OFF", data_.autoUpdate)) { data_.autoUpdate = !data_.autoUpdate; data_.SaveConfig(); }
     ImGui::EndDisabled();
+    if (ImGui::Button("Show the tour again")) StartTour();
+    ImGui::SameLine();
     ImGui::TextColored(kDim, "Ctrl + 1 to 9 switches tabs. Ctrl + and Ctrl - change the interface size.");
     EndCard();
     ImGui::EndChild();
