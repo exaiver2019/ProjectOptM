@@ -92,7 +92,7 @@ void App::Init(HWND hwnd, float dpiScale) {
     startMs_ = Ms();
     selfPath_ = util::SelfPath();   // before any rename: Windows reports the renamed path afterwards
     std::string cmd = util::Lower(util::Narrow(GetCommandLineW()));
-    const char* pages[] = { "home", "games", "sessions", "overlay", "tweaks", "system", "activity", "settings" };
+    const char* pages[] = { "home", "games", "sessions", "overlay", "tweaks", "system", "activity", "settings", "about" };
     for (int i = 0; i < PageCount; i++)
         if (cmd.find(std::string("--page ") + pages[i]) != std::string::npos) page_ = (Page)i;
 
@@ -135,6 +135,7 @@ void App::Init(HWND hwnd, float dpiScale) {
     if (!sys_.gpus.empty()) sensors_.Start(sys_.gpus[0].luidLow, sys_.gpus[0].luidHigh, sys_.gpus[0].vramBytes);
     overlayHotkey_ = RegisterHotKey(hwnd_, kHotkeyOverlay, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O') != 0;
     overlayDemo_ = cmd.find("--overlay-demo") != std::string::npos;
+    howItWorks_ = cmd.find("--how-it-works") != std::string::npos;   // developer check: open that window
     RefreshChecks();
     int warns = (int)std::count_if(checks_.begin(), checks_.end(), [](const Check& c) { return c.state == Check::Warn; });
     if (warns) Log(std::to_string(warns) + " system check(s) need attention - click the outlined chips on the System page to fix");
@@ -932,7 +933,7 @@ void App::Render() {
     animNext_ = false;
     marks_.clear();
 
-    // Ctrl+1..8 switches tabs; Ctrl + / - / 0 changes the interface size
+    // Ctrl+1..9 switches tabs; Ctrl + / - / 0 changes the interface size
     if (io.KeyCtrl && !io.WantTextInput) {
         for (int i = 0; i < PageCount; i++)
             if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + i), false) || ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_Keypad1 + i), false)) page_ = (Page)i;
@@ -963,7 +964,7 @@ void App::Render() {
     ImGui::BeginChild("content", ImVec2(io.DisplaySize.x - ImGui::GetCursorPosX() - pad, h), 0, ImGuiWindowFlags_NoScrollbar);
     StatusBar();
     ImGui::Dummy(ImVec2(0, 4 * s_));
-    static const char* titles[] = { "Home", "Games", "Sessions", "Overlay", "Tweaks", "System", "Activity", "Settings" };
+    static const char* titles[] = { "Home", "Games", "Sessions", "Overlay", "Tweaks", "System", "Activity", "Settings", "About" };
     ImGui::PushFont(fontTitle_);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4 * s_);
     ImGui::TextUnformatted(titles[page_]);
@@ -987,6 +988,7 @@ void App::Render() {
         case Games: PageGames(); break;
         case Sessions: PageSessions(); break;
         case Overlay: PageOverlay(); break;
+        case About: PageAbout(); break;
         case System: PageSystem(); break;
         case Activity: PageActivity(); break;
         case Settings: PageSettings(); break;
@@ -998,6 +1000,7 @@ void App::Render() {
     ImGui::EndChild();
     HistoryPopup();
     GameSettingsPopup();
+    HowItWorksPopup();
     FeedbackPopup();
     ImGui::End();
     TourOverlay();
@@ -1023,7 +1026,7 @@ void App::Mark(const char* key) {
 
 namespace {
 struct TourStep { int page; const char* mark; const char* title; const char* text; };
-// page numbers follow App::Page: Home 0, Games 1, Sessions 2, Overlay 3, Tweaks 4, System 5, Activity 6, Settings 7
+// page numbers follow App::Page: Home 0, Games 1, Sessions 2, Overlay 3, Tweaks 4, System 5, Activity 6, Settings 7, About 8
 const TourStep kTour[] = {
     { 0, "", "Welcome to Project OptM",
       "Project OptM spots the game you're playing and tunes Windows for it - the best CPU cores, priorities, background apps "
@@ -1031,7 +1034,7 @@ const TourStep kTour[] = {
     { 0, "status", "What's happening right now",
       "This bar shows the game being optimized and what was done for it. AUTO-OPTIMIZE turns everything on or off." },
     { 0, "nav", "Pages",
-      "Home, Games, Sessions, Overlay, Tweaks, System, Activity and Settings. Ctrl + 1 to 8 jumps straight to one." },
+      "Home, Games, Sessions, Overlay, Tweaks, System, Activity, Settings and About. Ctrl + 1 to 9 jumps straight to one." },
     { 0, "perf", "Live performance",
       "While a game runs you see its FPS, 1% lows and a frametime graph here. Every session is saved with its playtime and FPS "
       "on the Sessions page, so you can see how a game improves - and the Overlay page puts the numbers over the game itself." },
@@ -1046,7 +1049,7 @@ const TourStep kTour[] = {
       "fixed with one click." },
     { 0, "footer", "Undo everything, any time",
       "Project OptM keeps running in the tray. Ctrl + Alt + End - or Panic in the tray menu - instantly undoes every change.\n\n"
-      "You can replay this tour from Settings whenever you like." },
+      "You can replay this tour from the About page whenever you like." },
 };
 const int kTourSteps = (int)(sizeof(kTour) / sizeof(kTour[0]));
 }  // namespace
@@ -1191,8 +1194,8 @@ void App::Sidebar(float height) {
     ImGui::Dummy(ImVec2(0, 14 * s_));
 
     // navigation
-    static const char* names[] = { "Home", "Games", "Sessions", "Overlay", "Tweaks", "System", "Activity", "Settings" };
-    static const unsigned icons[] = { 0xE80F, 0xE7FC, 0xE823, 0xE890, 0xE9E9, 0xE7F4, 0xE81C, 0xE713 };
+    static const char* names[] = { "Home", "Games", "Sessions", "Overlay", "Tweaks", "System", "Activity", "Settings", "About" };
+    static const unsigned icons[] = { 0xE80F, 0xE7FC, 0xE823, 0xE890, 0xE9E9, 0xE7F4, 0xE81C, 0xE713, 0xE946 };
     ImDrawList* dl = ImGui::GetWindowDrawList();
     int warns = (int)std::count_if(checks_.begin(), checks_.end(), [](const Check& c) { return c.state == Check::Warn; });
     // highlights go on a layer under the icons and labels, so the selection can glide between tabs
@@ -2521,6 +2524,135 @@ void App::OverlayPositioner() {
                              "It lands in the same spot in every game.", anchor ? " (the game's monitor)" : "");
     ImGui::PopTextWrapPos();
 }
+// ------------------------------------------------------------ About
+void App::PageAbout() {
+    float w = std::min(ImGui::GetContentRegionAvail().x, 980 * s_);
+    ImGui::BeginChild("aboutCol", ImVec2(w, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
+    BeginCard("abouthero");
+    float x0 = ImGui::GetCursorPosX(), cw = ImGui::GetContentRegionAvail().x;
+    auto centerAt = [&](float itemW) { ImGui::SetCursorPosX(x0 + std::max(0.0f, (cw - itemW) / 2)); };
+    // text centred line by line, wrapped at maxW
+    auto centered = [&](const std::string& text, float maxW, const ImVec4& col) {
+        std::vector<std::string> lines;
+        std::string line;
+        for (auto& word : util::Split(text, ' ')) {
+            std::string tryLine = line.empty() ? word : line + " " + word;
+            if (!line.empty() && ImGui::CalcTextSize(tryLine.c_str()).x > maxW) { lines.push_back(line); line = word; }
+            else line = tryLine;
+        }
+        if (!line.empty()) lines.push_back(line);
+        for (auto& l : lines) { centerAt(ImGui::CalcTextSize(l.c_str()).x); ImGui::TextColored(col, "%s", l.c_str()); }
+    };
+
+    ImGui::Dummy(ImVec2(0, 12 * s_));
+    centerAt(60 * s_);
+    Logo(60 * s_);
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    ImGui::PushFont(fontTitle_);
+    centerAt(ImGui::CalcTextSize("Project OptM").x);
+    ImGui::TextUnformatted("Project OptM");
+    ImGui::PopFont();
+    const char* ver = "v" OPTM_VERSION "   -   Windows 10/11 x64";
+    centerAt(ImGui::CalcTextSize(ver).x);
+    ImGui::TextColored(kDim, "%s", ver);
+    ImGui::Dummy(ImVec2(0, 8 * s_));
+    centered("Spots the game you're playing and tunes Windows for it: the best CPU cores, priorities, background apps, "
+             "power and memory. When the game closes, every change is put back. Nothing is left behind.", std::min(cw, 720 * s_), kSub);
+    ImGui::Dummy(ImVec2(0, 14 * s_));
+
+    // three numbers
+    double mins = 0;   // sessions Project OptM itself ran (not ones imported from other apps)
+    for (auto& h : data_.history) if (h.version != "imported" && h.version != "Optimizer") mins += h.minutes;
+    std::pair<std::string, const char*> tiles[] = {
+        { std::to_string(data_.profiles.size()), "Games configured" },
+        { std::to_string(tweakset::All().size()), "Tweaks available" },
+        { mins >= 1 ? util::FormatDuration(mins) : std::string("0m"), "Time optimized" },
+    };
+    float gap = 14 * s_, tileW = (cw - 2 * gap) / 3, tileH = 88 * s_;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 tp = ImGui::GetCursorScreenPos();
+    for (int i = 0; i < 3; i++) {
+        ImVec2 a(tp.x + i * (tileW + gap), tp.y), b(a.x + tileW, a.y + tileH);
+        dl->AddRectFilled(a, b, U32(g_card2), g_cardR);
+        ImFont* big = fontTitle_;
+        ImVec2 ns = big->CalcTextSizeA(big->FontSize, FLT_MAX, 0, tiles[i].first.c_str());
+        dl->AddText(big, big->FontSize, ImVec2(a.x + (tileW - ns.x) / 2, a.y + 18 * s_), U32(kText), tiles[i].first.c_str());
+        ImVec2 ls = ImGui::CalcTextSize(tiles[i].second);
+        dl->AddText(ImVec2(a.x + (tileW - ls.x) / 2, b.y - ls.y - 16 * s_), U32(kDim), tiles[i].second);
+    }
+    ImGui::Dummy(ImVec2(cw, tileH));
+    ImGui::Dummy(ImVec2(0, 14 * s_));
+
+    // buttons
+    const char* labels[] = { "How it works", "Replay the tour", "GitHub page" };
+    float pad = ImGui::GetStyle().FramePadding.x * 2, bgap = 10 * s_, total = 0;
+    for (auto* l : labels) total += ImGui::CalcTextSize(l).x + pad + 24 * s_;
+    total += bgap * 2;
+    centerAt(total);
+    if (ImGui::Button(labels[0], ImVec2(ImGui::CalcTextSize(labels[0]).x + pad + 24 * s_, 0))) howItWorks_ = true;
+    ImGui::SameLine(0, bgap);
+    if (ImGui::Button(labels[1], ImVec2(ImGui::CalcTextSize(labels[1]).x + pad + 24 * s_, 0))) StartTour();
+    ImGui::SameLine(0, bgap);
+    if (ImGui::Button(labels[2], ImVec2(ImGui::CalcTextSize(labels[2]).x + pad + 24 * s_, 0)))
+        util::OpenAsUser(util::Widen("https://github.com/" OPTM_UPDATE_REPO));
+    ImGui::Dummy(ImVec2(0, 12 * s_));
+    centered("Made by exaiver2019  \xC2\xB7  MIT license  \xC2\xB7  Interface by Dear ImGui (MIT)", cw, kDim);
+    ImGui::Dummy(ImVec2(0, 6 * s_));
+    EndCard();
+    ImGui::EndChild();
+}
+
+// "How it works": what Project OptM does, and what it never does
+void App::HowItWorksPopup() {
+    if (!howItWorks_) return;
+    if (!ImGui::IsPopupOpen("howitworks")) ImGui::OpenPopup("howitworks");
+    ImGuiIO& io = ImGui::GetIO();
+    float textW = std::min(660 * s_, io.DisplaySize.x - 120 * s_);   // fixed: the window sizes itself around it
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * s_, 20 * s_));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, g_cardR);
+    if (!ImGui::BeginPopupModal("howitworks", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PopStyleVar(2);
+        return;
+    }
+    ImGui::PopStyleVar(2);
+    ImGui::PushFont(fontTitle_);
+    ImGui::TextUnformatted("How it works");
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 4 * s_));
+    struct Step { const char* title; const char* text; };
+    const Step steps[] = {
+        { "1.  It spots your game",
+          "Every few seconds it looks at what's running. Games from Steam, Epic, GOG, Ubisoft, Xbox, EA and Riot are "
+          "recognised the first time they start and added to your games - or add and edit them on the Games page." },
+        { "2.  It tunes Windows for it",
+          "The game gets its profile: the best CPU cores for your chip, a higher priority, background apps moved aside, "
+          "and the tweaks from its preset. Games with kernel anti-cheat get safe mode - their process is never touched, "
+          "only system-side tweaks." },
+        { "3.  It puts everything back",
+          "When the game closes, every change is undone. Each one is saved before it's made, so even after a crash the "
+          "next start puts things back. Ctrl + Alt + End undoes everything instantly." },
+        { "What it never does",
+          "It never loads anything into a game, never changes game files, and never sends your data anywhere. It only "
+          "talks to GitHub to check for updates, and feedback is only sent if you submit it yourself." },
+    };
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textW);
+    ImGui::Dummy(ImVec2(textW, 0));
+    for (auto& st : steps) {
+        ImGui::Dummy(ImVec2(0, 6 * s_));
+        ImGui::PushFont(fontBold_);
+        ImGui::TextUnformatted(st.title);
+        ImGui::PopFont();
+        ImGui::TextColored(kSub, "%s", st.text);
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, 10 * s_));
+    float bw = 110 * s_;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + textW - bw);
+    if (AccentButton("Got it", ImVec2(bw, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) { howItWorks_ = false; ImGui::CloseCurrentPopup(); }
+    ImGui::EndPopup();
+}
+
 // ------------------------------------------------------------ Settings
 void App::PageSettings() {
     float w = std::min(ImGui::GetContentRegionAvail().x, 680 * s_);
@@ -2677,23 +2809,18 @@ void App::PageSettings() {
     EndCard();
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
-    BeginCard("about");
-    Label("ABOUT");
+    BeginCard("updates");
+    Label("UPDATES");
     ImGui::Dummy(ImVec2(0, 2 * s_));
-    ImGui::PushFont(fontBold_);
-    ImGui::TextUnformatted("Project OptM v" OPTM_VERSION);
-    ImGui::PopFont();
     std::string st = !updater_.Enabled() ? "Updates are off (no GitHub repo set in version.h)."
-                   : !updater_.Status().empty() ? updater_.Status() : std::string("Updates from github.com/") + OPTM_UPDATE_REPO;
+                   : !updater_.Status().empty() ? updater_.Status() : "Project OptM v" OPTM_VERSION " - updates come from github.com/" OPTM_UPDATE_REPO;
     ImGui::TextColored(kSub, "%s", st.c_str());
     ImGui::BeginDisabled(!updater_.Enabled());
     if (ImGui::Button("Check for updates")) { lastUpdateCheck_ = Ms(); updater_.Check(true); }
     ImGui::SameLine();
     if (toggle(data_.autoUpdate ? "Auto-check: ON" : "Auto-check: OFF", data_.autoUpdate)) { data_.autoUpdate = !data_.autoUpdate; data_.SaveConfig(); }
     ImGui::EndDisabled();
-    if (ImGui::Button("Show the tour again")) StartTour();
-    ImGui::SameLine();
-    ImGui::TextColored(kDim, "Ctrl + 1 to 6 switches tabs. Ctrl + and Ctrl - change the interface size.");
+    ImGui::TextColored(kDim, "Ctrl + 1 to 9 switches tabs. Ctrl + and Ctrl - change the interface size.");
     EndCard();
     ImGui::EndChild();
 }

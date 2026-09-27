@@ -50,7 +50,7 @@ public:
     void ShowMain();
 
 private:
-    enum Page { Home, Games, Sessions, Overlay, Tweaks, System, Activity, Settings, PageCount };
+    enum Page { Home, Games, Sessions, Overlay, Tweaks, System, Activity, Settings, About, PageCount };
 
     // setup
     void LoadFonts();
@@ -91,6 +91,8 @@ private:
     void PageGames();
     void PageSessions();
     void PageOverlay();
+    void PageAbout();
+    void HowItWorksPopup();
     void PageSystem();
     void PageActivity();
     void PageSettings();
@@ -180,6 +182,9 @@ private:
 
     // Settings page
     char hexBuf_[16] = {};         // custom accent color
+
+    // About page
+    bool howItWorks_ = false;      // its "How it works" window is open
 
     // feedback (a filled-in GitHub issue)
     bool feedbackOpen_ = false;
