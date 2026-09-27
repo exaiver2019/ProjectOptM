@@ -101,6 +101,7 @@ void App::Init(HWND hwnd, float dpiScale) {
     data_.Load();
     int imported = data_.ImportOtherHistory();
     snprintf(hexBuf_, sizeof(hexBuf_), "%s", data_.theme.accent.c_str());
+    snprintf(nameBuf_, sizeof(nameBuf_), "%s", data_.greetName.c_str());
     s_ = dpi_ * Zoom();
     LoadFonts();
     ApplyTheme();
@@ -210,8 +211,22 @@ void App::Init(HWND hwnd, float dpiScale) {
         for (auto it = b.rbegin(); it != b.rend(); ++it) if (!it->empty()) tweaks::Restore(*it);
         Log("roundtrip after:  " + state());
     }
-    // first start of this version: show the welcome tour (not in screenshot test runs)
-    if (!data_.tourDone && tourStep_ < 0 && cmd.find("--screenshot") == std::string::npos) StartTour();
+    // the intro: when the window opens (not into the tray, not in screenshot test runs unless --intro asks)
+    bool testShot = cmd.find("--screenshot") != std::string::npos;
+    introPending_ = data_.intro && data_.animations && cmd.find("--tray") == std::string::npos &&
+                    (!testShot || cmd.find("--intro") != std::string::npos);
+    if (introPending_) {
+        time_t now = time(nullptr); tm lt; localtime_s(&lt, &now);
+        const char* part = lt.tm_hour >= 5 && lt.tm_hour < 12 ? "Good morning" : lt.tm_hour >= 12 && lt.tm_hour < 17 ? "Good afternoon"
+                         : lt.tm_hour >= 17 && lt.tm_hour < 22 ? "Good evening" : "Welcome back";
+        std::string name = util::Trim(data_.greetName);   // Settings > Your name (Windows account names aren't reliable)
+        introGreeting_ = !data_.tourDone ? "Welcome to Project OptM" : std::string(part) + (name.empty() ? "" : ", " + name);
+        introLine_ = !data_.tourDone ? "Let's get your games running their best"
+                   : !data_.autoOptimize ? "Auto-optimize is off - turn it on to start optimizing"
+                   : Plural(data_.profiles.size(), "game") + " ready - start one and Project OptM takes it from there";
+    }
+    // first start of this version: show the welcome tour (after the intro; not in screenshot test runs)
+    if (!data_.tourDone && tourStep_ < 0 && !testShot) StartTour();
 
     // developer check: --fps-self graphs this window's own frames
     if (cmd.find("--fps-self") != std::string::npos) {
@@ -363,7 +378,7 @@ void App::Log(const std::string& line) {
     if (log_.size() > 2000) log_.erase(log_.begin(), log_.begin() + 500);
 }
 
-bool App::Busy() const { return selfTest_ || animating_ || ImGui::IsAnyItemActive(); }
+bool App::Busy() const { return selfTest_ || animating_ || ImGui::IsAnyItemActive() || introPending_ || introStart_; }
 
 // ============================================================ background
 void App::Update() {
@@ -1008,7 +1023,8 @@ void App::Render() {
     HowItWorksPopup();
     FeedbackPopup();
     ImGui::End();
-    TourOverlay();
+    if (!introPending_ && !introStart_) TourOverlay();   // the tour waits for the intro
+    IntroOverlay();
 }
 
 // ------------------------------------------------------------ animation + tour
@@ -1058,6 +1074,77 @@ const TourStep kTour[] = {
 };
 const int kTourSteps = (int)(sizeof(kTour) / sizeof(kTour[0]));
 }  // namespace
+
+// The intro: the logo scales in while its ring draws itself and the needle swings into place, then the
+// name, a greeting and a status line fade up; after ~2 s it all fades away. A click or any key skips it.
+void App::IntroOverlay() {
+    if (introPending_) { introPending_ = false; introStart_ = Ms(); }
+    if (!introStart_) return;
+    const float fadeAt = 1.85f, total = 2.3f;
+    float t = (Ms() - introStart_) / 1000.0f;
+    if (introSkip_) { introSkip_ = false; if (t < fadeAt) { introStart_ = Ms() - (uint64_t)(fadeAt * 1000); t = fadeAt; } }
+    if (t >= total) { introStart_ = 0; return; }
+    const float kPi = 3.14159265f;
+    auto clamp01 = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
+    auto easeOut = [](float v) { return 1 - (1 - v) * (1 - v) * (1 - v); };
+    auto easeBack = [](float v) { const float c = 1.6f; return 1 + (c + 1) * std::pow(v - 1, 3.0f) + c * std::pow(v - 1, 2.0f); };   // a little overshoot
+    float fade = t < fadeAt ? 1.0f : 1.0f - easeOut(clamp01((t - fadeAt) / (total - fadeAt)));
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::SetNextWindowFocus();   // above everything, and it takes the clicks
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
+    ImGui::Begin("##intro", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    if (ImGui::InvisibleButton("skip", io.DisplaySize) || ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+        ImGui::IsKeyPressed(ImGuiKey_Space) || !io.InputQueueCharacters.empty())
+        introSkip_ = true;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+    dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize, U32(Alpha(bg, fade)));
+
+    // the logo: its tile scales in, the ring draws round, the needle swings to its place
+    ImVec2 c(io.DisplaySize.x / 2, io.DisplaySize.y / 2 - 56 * s_);
+    float grow = easeBack(clamp01(t / 0.55f));
+    float size = 104 * s_ * std::max(0.0f, grow), k = size / 40.f;
+    ImVec2 a(c.x - size / 2, c.y - size / 2), b(c.x + size / 2, c.y + size / 2);
+    float tileA = clamp01(t / 0.25f) * fade;
+    dl->AddRectFilled(a, b, U32(ImVec4(10 / 255.f, 12 / 255.f, 16 / 255.f, tileA)), g_cardR * 1.4f);
+    dl->AddRect(a, b, U32(Alpha(g_accent, 0.55f * tileA)), g_cardR * 1.4f, 0, 1.5f * s_);
+    float ring = easeOut(clamp01((t - 0.12f) / 0.6f));
+    if (ring > 0.01f && size > 1) {
+        const float start = -kPi / 2;
+        dl->PathArcTo(c, 11.5f * k, start, start + 2 * kPi * ring, 64);
+        dl->PathStroke(U32(Alpha(g_accent, fade)), 0, 4.6f * k);
+    }
+    float swing = easeBack(clamp01((t - 0.45f) / 0.45f));
+    if (swing > 0) {   // from pointing straight down to its resting angle (up and right)
+        float ang = kPi / 2 + (-kPi / 4 - kPi / 2) * swing, len = 6.5f * k;
+        float na = clamp01((t - 0.45f) / 0.15f) * fade;
+        dl->AddLine(c, ImVec2(c.x + std::cos(ang) * len, c.y + std::sin(ang) * len), U32(ImVec4(1, 1, 1, na)), 2.6f * k);
+        dl->AddCircleFilled(c, 2.1f * k, U32(ImVec4(1, 1, 1, na)), 16);
+    }
+
+    // the words fade up one after another
+    auto line = [&](ImFont* f, float px, const std::string& text, float at, float y, ImVec4 col) {
+        float v = easeOut(clamp01((t - at) / 0.45f));
+        if (v <= 0) return;
+        ImVec2 ts = f->CalcTextSizeA(px, FLT_MAX, 0, text.c_str());
+        col.w *= v * fade;
+        dl->AddText(f, px, ImVec2(c.x - ts.x / 2, y + (1 - v) * 14 * s_), U32(col), text.c_str());
+    };
+    float y = c.y + 104 * s_ / 2 + 26 * s_;
+    line(fontTitle_, fontTitle_->FontSize * 1.35f, "Project OptM", 0.38f, y, kText);
+    y += fontTitle_->FontSize * 1.35f + 14 * s_;
+    line(fontBold_, fontBold_->FontSize * 1.1f, introGreeting_, 0.62f, y, g_accent);
+    y += fontBold_->FontSize * 1.1f + 8 * s_;
+    line(fontRegular_, fontRegular_->FontSize, introLine_, 0.8f, y, kSub);
+    ImGui::End();
+}
 
 void App::StartTour() { TourGo(0); }
 
@@ -2799,7 +2886,23 @@ void App::PageSettings() {
         data_.SaveConfig();
     }
     ImGui::SameLine();
+    ImGui::BeginDisabled(!data_.animations);
+    if (toggle(data_.intro && data_.animations ? "Intro on start: ON" : "Intro on start: OFF", data_.intro && data_.animations)) {
+        data_.intro = !data_.intro;
+        data_.SaveConfig();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", data_.animations ? "A 2-second animated greeting when Project OptM opens (a click or any key skips it)"
+                                                 : "Needs Animations on");
+    ImGui::SameLine();
     ImGui::TextColored(kDim, "Page fades, sliding switches and highlights");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kSub, "Your name");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(220 * s_);
+    ImGui::InputTextWithHint("##greetname", "for the greeting (optional)", nameBuf_, sizeof(nameBuf_));
+    if (ImGui::IsItemDeactivatedAfterEdit()) { data_.greetName = util::Trim(nameBuf_); data_.SaveConfig(); }
     ImGui::Dummy(ImVec2(0, 2 * s_));
     if (ImGui::Button("Reset look")) {
         data_.theme = Theme();

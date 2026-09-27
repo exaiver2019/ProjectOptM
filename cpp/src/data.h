@@ -72,6 +72,8 @@ struct AppData {
     std::vector<std::string> fsoManaged;               // game exes we turned fullscreen optimizations off for
     bool autoDetect = true;                            // add games that have no profile when they start
     bool animations = true;                            // subtle UI animations
+    bool intro = true;                                 // short animated greeting when the app opens
+    std::string greetName;                             // what the greeting calls you ("" = no name)
     bool tourDone = false;                             // the welcome tour has been shown
     std::vector<std::string> ignoredExes;              // "Not a game" - never detect these again
     std::vector<std::string> autoAdded;                // profile names that detection added

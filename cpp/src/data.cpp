@@ -472,6 +472,8 @@ void AppData::LoadConfig() {
     fsoManaged = tw["FsoManaged"].AsStrings();
     autoDetect = j["AutoDetect"].AsBool(true);
     animations = j["Animations"].AsBool(true);
+    intro = j["Intro"].AsBool(true);
+    greetName = j["Name"].AsString();
     tourDone = j["TourDone"].AsBool(false);
     ignoredExes = j["IgnoredExes"].AsStrings();
     autoAdded = j["AutoAdded"].AsStrings();
@@ -546,6 +548,8 @@ void AppData::SaveConfig() const {
     j.obj["Tweaks"] = tw;
     j.obj["AutoDetect"] = Json::Boolean(autoDetect);
     j.obj["Animations"] = Json::Boolean(animations);
+    j.obj["Intro"] = Json::Boolean(intro);
+    j.obj["Name"] = greetName.empty() ? Json() : Json::Str(greetName);
     j.obj["TourDone"] = Json::Boolean(tourDone);
     j.obj["IgnoredExes"] = Json::StrList(ignoredExes);
     j.obj["AutoAdded"] = Json::StrList(autoAdded);

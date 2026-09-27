@@ -124,6 +124,7 @@ private:
     void StartTour();
     void TourGo(int step);
     void TourOverlay();
+    void IntroOverlay();                            // the animated greeting when the app opens
 
     // widgets
     bool BeginCard(const char* id, float height = 0);
@@ -184,6 +185,7 @@ private:
 
     // Settings page
     char hexBuf_[16] = {};         // custom accent color
+    char nameBuf_[40] = {};        // Your name (the intro's greeting)
 
     // About page
     bool howItWorks_ = false;      // its "How it works" window is open
@@ -218,6 +220,10 @@ private:
     int lastPage_ = -1;
     std::map<std::string, ImVec4> marks_;         // screen rects of tour targets (x0, y0, x1, y1)
     int tourStep_ = -1;                            // -1 = no tour
+    bool introPending_ = false;                    // play the intro on the first frame
+    uint64_t introStart_ = 0;                      // when it started (0 = not playing)
+    bool introSkip_ = false;
+    std::string introGreeting_, introLine_;
 
     // developer switches
     bool selfTest_ = false;        // --fps-self: graph our own frames

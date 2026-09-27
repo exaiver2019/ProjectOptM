@@ -201,6 +201,7 @@ Handy for testing without touching your real setup:
 |---|---|
 | `--page home\|games\|sessions\|overlay\|tweaks\|system\|activity\|settings\|about` | open on that page |
 | `--how-it-works` | open the About page's How it works window |
+| `--intro` (with `--screenshot`) | play the opening intro in a screenshot run (normally skipped there) |
 | `--data-dir <folder>` (or `OPTM_DATA_DIR`) | use another data folder instead of `%APPDATA%\ProjectOptM` |
 | `--log-file <file>` (or `OPTM_LOG_FILE`) | copy the activity log to a file |
 | `--screenshot <file.png>` `--shot-delay <ms>` `--exit-after <ms>` | save the window to a PNG, then exit |
