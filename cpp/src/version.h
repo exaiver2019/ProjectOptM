@@ -22,7 +22,7 @@
 // Experimental builds published as GitHub pre-releases are numbered: tag v2.1.1-experimental.<N>.
 // Raise it before each experimental publish (Publish-Release.bat checks). 0 = never published (a local
 // build, older than any published one of the same version). Ignored for stable builds.
-#define OPTM_PRERELEASE    0
+#define OPTM_PRERELEASE    1
 
 // GitHub "user/repo" the releases live in; empty turns update checks off
 #ifndef OPTM_UPDATE_REPO
