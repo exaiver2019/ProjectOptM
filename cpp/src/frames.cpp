@@ -220,6 +220,16 @@ void FrameCapture::InjectForTest(double ms) {
     pending_.push_back({ ms, testTs_ });
 }
 
+double FrameCapture::SessionLowPct(double frac) const {
+    if (sessionN_ < 100) return 0;
+    uint64_t need = (uint64_t)std::ceil(sessionN_ * frac), acc = 0;
+    for (int b = 4000; b >= 0; b--) {
+        acc += hist_[b];
+        if (acc >= need) return 1000.0 / ((b + 0.5) * 0.05);
+    }
+    return 0;
+}
+
 double FrameCapture::SessionLow01() const {
     if (sessionN_ < 1000) return 0;   // under 1000 frames the 0.1% is a single frame - too noisy
     uint64_t need = (uint64_t)std::ceil(sessionN_ * 0.001), acc = 0;

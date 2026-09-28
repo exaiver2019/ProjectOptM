@@ -110,6 +110,58 @@ std::string CrashPattern(const std::vector<Session>& h, const std::string& game)
     return out;
 }
 
+Heat HeatOf(const std::vector<HeatSample>& samples) {
+    Heat h;
+    std::vector<float> hot, cool;
+    for (auto& s : samples) {
+        if (s.temp < 0) continue;
+        h.maxTemp = std::max(h.maxTemp, (double)s.temp);
+        if (s.temp >= 85) h.hotSeconds++;
+        if (s.gpu < 90 || s.fps <= 0) continue;   // only when the GPU was the limit
+        if (s.temp >= 85) hot.push_back(s.fps); else if (s.temp < 80) cool.push_back(s.fps);
+    }
+    if (hot.size() >= 30 && cool.size() >= 30) {
+        auto median = [](std::vector<float> v) { std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end()); return (double)v[v.size() / 2]; };
+        double mh = median(hot), mc = median(cool);
+        double drop = mc > 0 ? (mc - mh) / mc * 100 : 0;
+        if (drop >= 10) h.drop = std::round(drop);
+    }
+    return h;
+}
+
+std::string HeatNote(const Session& s) {
+    if (s.hotSeconds < 60) return "";
+    std::string t = "The GPU ran at 85 C or more for " + std::to_string(s.hotSeconds / 60) + " min" +
+                    (s.gpuTempMax > 0 ? " (up to " + Fmt("%.0f", s.gpuTempMax) + " C)" : "");
+    if (s.heatDrop > 0)
+        return t + ", and FPS was " + Fmt("%.0f", s.heatDrop) + "% lower while it was that hot at full load - it was likely "
+               "slowing itself down to cool off. Check the case airflow, dust and the GPU fan curve.";
+    return t + ". FPS didn't drop because of it, but better airflow keeps it from throttling in longer sessions.";
+}
+
+std::string CapAdvice(const Session& s, const std::string& gpuVendor, int& cap) {
+    cap = 0;
+    if (s.hz < 50 || s.avgFps <= 0 || (s.fpsSeconds > 0 && s.fpsSeconds < 60)) return "";
+    std::string why;
+    if (s.avgFps > s.hz * 1.05) {
+        cap = s.hz >= 100 ? s.hz - 3 : s.hz - 2;
+        why = "Your FPS (avg " + Fmt("%.0f", s.avgFps) + ") goes past your " + std::to_string(s.hz) + " Hz screen, so the extra frames are never "
+              "shown. A cap at " + std::to_string(cap) + " FPS keeps FreeSync / G-Sync in range and cuts input lag, heat and fan noise.";
+    } else if (s.fps5 >= 60 && s.fps5 < s.avgFps * 0.75) {
+        cap = std::min((int)(s.fps5 / 5) * 5, s.hz >= 100 ? s.hz - 3 : s.hz - 2);
+        // not worth it when it would take most of your FPS away (then it's stutters to fix, not pacing)
+        if (cap < 60 || cap >= s.avgFps * 0.9 || cap < s.avgFps * 0.6) { cap = 0; return ""; }
+        why = "FPS swings a lot: avg " + Fmt("%.0f", s.avgFps) + ", but 1 frame in 20 is slower than " + Fmt("%.0f", s.fps5) +
+              " FPS. A cap around " + std::to_string(cap) + " would feel steadier - frames arrive evenly - at the cost of the peaks.";
+    } else {
+        return "";
+    }
+    std::string where = gpuVendor == "AMD" ? "AMD Software > Gaming > the game > Radeon Chill, with min and max both at " + std::to_string(cap)
+                      : gpuVendor == "NVIDIA" ? "NVIDIA app > Graphics > the game > Max Frame Rate"
+                      : "your graphics driver's frame limiter";
+    return why + " Use the game's own frame limit if it has one, otherwise " + where + ".";
+}
+
 std::vector<Row> Compare(const Session& a, const Session& b) {
     std::vector<Row> rows;
     auto add = [&](const char* what, double va, double vb, const char* f, bool higherBetter, double same) {
@@ -139,7 +191,9 @@ std::vector<Row> Compare(const Session& a, const Session& b) {
     }
     add("GPU temp avg (C)", a.gpuTempAvg, b.gpuTempAvg, "%.0f", false, 2);
     add("GPU temp max (C)", a.gpuTempMax, b.gpuTempMax, "%.0f", false, 2);
+    add("GPU at 85 C+ (min)", a.hotSeconds / 60.0, b.hotSeconds / 60.0, "%.0f", false, 1);
     add("CPU use (%)", a.cpuAvg, b.cpuAvg, "%.0f", false, 3);
+    add("Video on other screen (min)", a.otherVideoSeconds / 60.0, b.otherVideoSeconds / 60.0, "%.0f", false, 1);
     add("Ping (ms)", a.pingAvg, b.pingAvg, "%.0f", false, 3);
     add("Played (min)", a.minutes, b.minutes, "%.0f", true, 1e9);   // never "better"
     auto text = [&](const char* what, const std::string& x, const std::string& y) {

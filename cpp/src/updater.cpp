@@ -72,21 +72,56 @@ std::string Sha256Hex(const std::string& data) {
     return hex;
 }
 
-// The running version. OPTM_UPDATE_AS pretends to be an older one (testing the updater).
+// The running version. OPTM_UPDATE_AS pretends to be another one (testing the updater).
 std::string Current() {
-    static std::string v = [] { std::string e = util::Narrow(util::EnvVar(L"OPTM_UPDATE_AS")); return e.empty() ? std::string(OPTM_VERSION) : e; }();
+    static std::string v = [] { std::string e = util::Narrow(util::EnvVar(L"OPTM_UPDATE_AS")); return e.empty() ? Updater::CurrentTag() : e; }();
     return v;
 }
 
-std::vector<int> Parts(std::string v) {
+// "v2.1.1-experimental.3" -> numbers {2,1,1,0}, channel rank (stable 2, experimental 1, unstable 0), pre-release number
+struct Key {
+    std::vector<int> nums;
+    int rank = 2, pre = 0;
+    bool operator<(const Key& o) const {
+        if (nums != o.nums) return nums < o.nums;
+        if (rank != o.rank) return rank < o.rank;
+        return pre < o.pre;
+    }
+};
+
+Key Parse(std::string v) {
     while (!v.empty() && (v[0] == 'v' || v[0] == 'V' || v[0] == ' ')) v.erase(0, 1);
-    std::vector<int> p;
-    for (auto& x : util::Split(v, '.')) p.push_back(atoi(x.c_str()));
-    while (p.size() < 4) p.push_back(0);
-    return p;
+    Key k;
+    size_t dash = v.find('-');
+    std::string num = v.substr(0, dash), suffix = dash == std::string::npos ? "" : util::Lower(v.substr(dash + 1));
+    for (auto& x : util::Split(num, '.')) k.nums.push_back(atoi(x.c_str()));
+    while (k.nums.size() < 4) k.nums.push_back(0);
+    if (!suffix.empty()) {
+        k.rank = suffix.rfind("unstable", 0) == 0 ? 0 : 1;   // any other suffix (beta, rc, experimental) counts as a pre-release
+        size_t dot = suffix.find_last_of('.');
+        if (dot != std::string::npos) k.pre = atoi(suffix.c_str() + dot + 1);
+    }
+    return k;
+}
+
+// Where releases come from. Test copies can point it at a local server (OPTM_TEST_UPDATE_BASE).
+std::string ApiBase() {
+    std::wstring t = util::EnvVar(L"OPTM_TEST_UPDATE_BASE");
+    if (!t.empty() && !util::EnvVar(L"OPTM_DATA_DIR").empty()) return util::Narrow(t);
+    return "https://api.github.com/repos/" OPTM_UPDATE_REPO;
 }
 
 }  // namespace
+
+std::string Updater::CurrentTag() {
+    if (!OPTM_CHANNEL[0]) return OPTM_VERSION;
+    return std::string(OPTM_VERSION) + "-" + OPTM_CHANNEL + "." + std::to_string(OPTM_PRERELEASE);
+}
+
+void Updater::SetChannel(const std::string& channel) {
+    std::lock_guard<std::mutex> l(mu_);
+    channel_ = channel == "experimental" ? "experimental" : "stable";
+}
 
 // ------------------------------------------------------------ Updater
 Updater::~Updater() { Join(); }
@@ -96,7 +131,7 @@ void Updater::Join() { if (worker_.joinable()) worker_.join(); }
 bool Updater::Enabled() const { return OPTM_UPDATE_REPO[0] != 0; }
 
 bool Updater::Newer(const std::string& tag, const std::string& current) {
-    return Parts(tag) > Parts(current);
+    return Parse(current) < Parse(tag);
 }
 
 void Updater::Set(State s, const std::string& status) { std::lock_guard<std::mutex> l(mu_); state_ = s; status_ = status; }
@@ -117,21 +152,42 @@ void Updater::Check(bool manual) {
 }
 
 void Updater::DoCheck(bool manual) {
+    std::string channel;
+    { std::lock_guard<std::mutex> l(mu_); channel = channel_; }
+    bool pre = channel == "experimental";
+    // stable: the latest full release (GitHub never marks a pre-release "latest");
+    // experimental: the newest of the recent releases, pre-releases included
+    bool testBase = !util::EnvVar(L"OPTM_TEST_UPDATE_BASE").empty() && !util::EnvVar(L"OPTM_DATA_DIR").empty();
+    std::string url = pre ? ApiBase() + "/releases?per_page=20" : testBase ? ApiBase() + "/releases/latest" : std::string(OPTM_UPDATE_API);
     std::string body, err;
-    if (!net::Get(OPTM_UPDATE_API, body, err, 10)) {
+    if (!net::Get(url, body, err, 10)) {
         std::lock_guard<std::mutex> l(mu_);
         state_ = version_.empty() ? Failed : Available;   // keep offering an update we already found
         if (version_.empty()) status_ = "Couldn't check for updates";
         if (manual) log_.push_back("Update check failed: " + err);
         return;
     }
-    Json rel = Json::Parse(body);
-    std::string tag = rel["tag_name"].AsString();
+    Json list = Json::Parse(body);
+    std::vector<const Json*> candidates;
+    if (pre) { for (auto& r : list.arr) candidates.push_back(&r); }
+    else candidates.push_back(&list);
+    const Json* best = nullptr;
     const Json* asset = nullptr;
-    for (auto& a : rel["assets"].arr)
-        if (a["name"].AsString() == "ProjectOptM.exe") asset = &a;
+    std::string tag;
+    for (auto* r : candidates) {
+        if ((*r)["draft"].AsBool(false)) continue;
+        std::string t = (*r)["tag_name"].AsString();
+        if (t.empty() || Parse(t).rank == 0) continue;   // unstable builds are never offered
+        const Json* a = nullptr;
+        for (auto& x : (*r)["assets"].arr)
+            if (x["name"].AsString() == "ProjectOptM.exe") a = &x;
+        if (!a) continue;
+        if (!best || Parse(tag) < Parse(t)) { best = r; asset = a; tag = t; }
+    }
+    const Json& rel = best ? *best : list;
     std::lock_guard<std::mutex> l(mu_);
     if (asset && Newer(tag, Current())) {
+        prerelease_ = rel["prerelease"].AsBool(false);
         std::string ver = tag;
         while (!ver.empty() && (ver[0] == 'v' || ver[0] == 'V')) ver.erase(0, 1);
         bool isNew = version_ != ver;
@@ -140,8 +196,8 @@ void Updater::DoCheck(bool manual) {
         digest_ = (*asset)["digest"].AsString();
         notes_ = rel["body"].AsString();
         state_ = Available;
-        status_ = "Version " + ver + " is available.";
-        if (isNew) log_.push_back("Update available: v" + ver + " - click 'Update to v" + ver + "' at the top");
+        status_ = std::string(prerelease_ ? "Experimental build " : "Version ") + ver + " is available.";
+        if (isNew) log_.push_back(std::string(prerelease_ ? "Experimental update" : "Update") + " available: v" + ver + " - click 'Update to v" + ver + "' at the top");
     } else {
         state_ = UpToDate;
         status_ = "Up to date (checked " + util::NowStamp("%H:%M") + ")";

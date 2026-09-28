@@ -1,6 +1,7 @@
 #include "data.h"
 #include "json.h"
 #include "util.h"
+#include "version.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -434,6 +435,87 @@ void AppData::Load() {
     if (util::ReadFile(DataDir() + L"\\timeline.json", text)) timeline = Json::Parse(text)["Events"].AsStrings();
 }
 
+std::string AppData::UpdateChannel() const {
+    if (!updateChannel.empty()) return updateChannel;
+    return std::string(OPTM_CHANNEL).empty() ? "stable" : "experimental";   // follow the build you run
+}
+
+namespace {
+const char* kBackupFiles[] = { "profiles.ini", "settings.json", "history.csv", "session-details.json", "timeline.json" };
+
+// settings.json keys that describe this PC's current state, not your choices: never exported, never
+// restored (restoring another PC's crash-recovery list would "undo" changes that were never made here)
+void KeepMachineState(Json& to, const Json& from) {
+    for (const char* k : { "Ifeo", "GpuManaged", "RestorePlan", "PausedSvcs", "OptimizerImport" }) {
+        if (from[k].type == Json::Null) to.obj.erase(k); else to.obj[k] = from[k];
+    }
+    if (to["Tweaks"].type == Json::Object) {
+        for (const char* k : { "Backups", "FsoManaged" }) {
+            if (from["Tweaks"][k].type == Json::Null) to.obj["Tweaks"].obj.erase(k); else to.obj["Tweaks"].obj[k] = from["Tweaks"][k];
+        }
+    }
+    if (to["Experimental"].type == Json::Object) {
+        if (from["Experimental"]["GpuDriverSeen"].type == Json::Null) to.obj["Experimental"].obj.erase("GpuDriverSeen");
+        else to.obj["Experimental"].obj["GpuDriverSeen"] = from["Experimental"]["GpuDriverSeen"];
+    }
+}
+}  // namespace
+
+bool AppData::ExportBackup(const std::wstring& file, std::string& error) const {
+    Json files = Json::Obj();
+    for (const char* name : kBackupFiles) {
+        std::string text;
+        if (!util::ReadFile(DataDir() + L"\\" + util::Widen(name), text)) continue;
+        if (std::string(name) == "settings.json") {   // your choices only
+            Json s = Json::Parse(text);
+            KeepMachineState(s, Json::Obj());
+            text = s.Dump() + "\r\n";
+        }
+        files.obj[name] = Json::Str(text);
+    }
+    if (files.obj.empty()) { error = "there's nothing to back up yet"; return false; }
+    Json j = Json::Obj();
+    j.obj["ProjectOptMBackup"] = Json::Num(1);
+    j.obj["Created"] = Json::Str(util::NowStamp("%Y-%m-%d %H:%M"));
+    j.obj["Version"] = Json::Str(OPTM_VERSION_LABEL);
+    j.obj["Files"] = files;
+    if (!util::WriteFile(file, j.Dump() + "\r\n")) { error = "couldn't write the file"; return false; }
+    return true;
+}
+
+bool AppData::ImportBackup(const std::wstring& file, std::string& error) {
+    std::string text;
+    if (!util::ReadFile(file, text)) { error = "couldn't read the file"; return false; }
+    if (text.size() > 64u * 1024 * 1024) { error = "that file is far too big to be a backup"; return false; }
+    Json j = Json::Parse(text);
+    if (j["ProjectOptMBackup"].type != Json::Number || j["Files"].type != Json::Object) { error = "that isn't a Project OptM backup"; return false; }
+    const Json& files = j["Files"];
+    if (files["profiles.ini"].type != Json::String) { error = "the backup has no game profiles in it"; return false; }
+    // keep what's here now, in case the restore isn't what you wanted
+    std::wstring keep = DataDir() + L"\\backup-before-restore-" + util::Widen(util::NowStamp("%Y%m%d-%H%M%S"));
+    CreateDirectoryW(keep.c_str(), nullptr);
+    for (const char* name : kBackupFiles) {
+        std::wstring n = util::Widen(name);
+        CopyFileW((DataDir() + L"\\" + n).c_str(), (keep + L"\\" + n).c_str(), FALSE);
+    }
+    for (const char* name : kBackupFiles) {
+        const Json& f = files[name];
+        if (f.type != Json::String) continue;   // not in the backup: yours stays
+        std::string out = f.str;
+        if (std::string(name) == "settings.json") {
+            std::string cur;
+            Json now = util::ReadFile(DataDir() + L"\\settings.json", cur) ? Json::Parse(cur) : Json::Obj();
+            Json s = Json::Parse(out);
+            if (s.type != Json::Object) continue;
+            KeepMachineState(s, now);   // this PC's recovery state stays as it is
+            out = "\xEF\xBB\xBF" + s.Dump() + "\r\n";
+        }
+        if (!util::WriteFile(DataDir() + L"\\" + util::Widen(name), out)) { error = std::string("couldn't write ") + name + " (your old files are in " + util::Narrow(keep) + ")"; return false; }
+    }
+    Load();
+    return true;
+}
+
 void AppData::AddTimeline(const std::string& kind, const std::string& text) {
     timeline.push_back(util::NowStamp("%Y-%m-%d %H:%M:%S") + "|" + kind + "|" + text);
     if (timeline.size() > 400) timeline.erase(timeline.begin(), timeline.end() - 400);
@@ -455,6 +537,11 @@ Json DetailsOf(const Session& s) {
     str("Exit", s.exit); str("Preset", s.preset); str("Cores", s.cores); str("Variant", s.variant); str("Cause", s.cause);
     num("GpuTempAvg", s.gpuTempAvg); num("GpuTempMax", s.gpuTempMax); num("CpuAvg", s.cpuAvg); num("PingAvg", s.pingAvg);
     if (!s.tweaks.empty()) d.obj["Tweaks"] = Json::StrList(s.tweaks);
+    if (s.hz > 0) d.obj["Hz"] = Json::Num(s.hz);
+    num("Fps5", s.fps5 > 0 ? s.fps5 : -1);
+    if (s.hotSeconds > 0) d.obj["HotSeconds"] = Json::Num(s.hotSeconds);
+    num("HeatDrop", s.heatDrop > 0 ? s.heatDrop : -1);
+    if (s.otherVideoSeconds > 0) d.obj["OtherVideoSeconds"] = Json::Num(s.otherVideoSeconds);
     return d;
 }
 void ApplyDetails(Session& s, const Json& d) {
@@ -466,6 +553,11 @@ void ApplyDetails(Session& s, const Json& d) {
     s.variant = d["Variant"].AsString(); s.cause = d["Cause"].AsString();
     s.gpuTempAvg = num("GpuTempAvg", -1); s.gpuTempMax = num("GpuTempMax", -1); s.cpuAvg = num("CpuAvg", -1); s.pingAvg = num("PingAvg", -1);
     s.tweaks = d["Tweaks"].AsStrings();
+    s.hz = (int)num("Hz", 0);
+    s.fps5 = num("Fps5", 0);
+    s.hotSeconds = (int)num("HotSeconds", 0);
+    s.heatDrop = num("HeatDrop", 0);
+    s.otherVideoSeconds = (int)num("OtherVideoSeconds", 0);
 }
 }  // namespace
 
@@ -547,6 +639,9 @@ void AppData::LoadConfig() {
     pingOn = ex["Ping"].AsBool(false);
     askGames = ex["AskGames"].AsBool(true);
     gpuDriverSeen = ex["GpuDriverSeen"].AsString();
+    summaryOn = ex["Summary"].AsBool(true);
+    updateChannel = j["UpdateChannel"].AsString();
+    if (updateChannel != "stable" && updateChannel != "experimental") updateChannel.clear();
     const Json& t = j["Theme"];
     theme.accent     = t["Accent"].AsString(theme.accent);
     theme.background = t["Bg"].AsString(theme.background);
@@ -610,7 +705,9 @@ void AppData::SaveConfig() const {
     ex.obj["Ping"] = Json::Boolean(pingOn);
     ex.obj["AskGames"] = Json::Boolean(askGames);
     ex.obj["GpuDriverSeen"] = gpuDriverSeen.empty() ? Json() : Json::Str(gpuDriverSeen);
+    ex.obj["Summary"] = Json::Boolean(summaryOn);
     j.obj["Experimental"] = ex;
+    j.obj["UpdateChannel"] = updateChannel.empty() ? Json() : Json::Str(updateChannel);
     CreateDirectoryW(DataDir().c_str(), nullptr);
     util::WriteFile(path, "\xEF\xBB\xBF" + j.Dump() + "\r\n");   // BOM so Windows PowerShell 5.1 reads it as UTF-8
 }

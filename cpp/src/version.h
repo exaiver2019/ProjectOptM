@@ -19,6 +19,11 @@
 #define OPTM_CHANNEL       "experimental"
 #define OPTM_VERSION_LABEL OPTM_VERSION " " OPTM_CHANNEL   // "2.1.1 experimental" (just the number when stable)
 
+// Experimental builds published as GitHub pre-releases are numbered: tag v2.1.1-experimental.<N>.
+// Raise it before each experimental publish (Publish-Release.bat checks). 0 = never published (a local
+// build, older than any published one of the same version). Ignored for stable builds.
+#define OPTM_PRERELEASE    0
+
 // GitHub "user/repo" the releases live in; empty turns update checks off
 #ifndef OPTM_UPDATE_REPO
 #define OPTM_UPDATE_REPO   "exaiver2019/ProjectOptM"

@@ -29,6 +29,7 @@ public:
     void ResetSession();
     bool SessionStats(double& avgFps, double& low1) const;          // whole session; false if too short
     double SessionLow01() const;                                    // 0.1% low FPS (0 if too few frames)
+    double SessionLowPct(double frac) const;                        // FPS the slowest frac of frames fall under (0.05 = 5% low)
     int SessionStutters() const { return stutters_; }
     double SessionSeconds() const { return sessionSum_ / 1000.0; }  // time covered by captured frames
     // stutters as QPC timestamps (start of the slow frame, end) - the stutter-cause finder looks inside them

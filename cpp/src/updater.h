@@ -22,6 +22,11 @@ public:
     std::string Notes() const;
     std::vector<std::string> TakeLog();   // lines for the activity log
 
+    // "stable": only full releases (releases/latest). "experimental": pre-releases too (the newest of all).
+    void SetChannel(const std::string& channel);
+    static std::string CurrentTag();      // this build as a tag: "2.1.0", "2.1.1-experimental.3", "2.1.1-experimental.0" (local)
+    // Version order: numbers first, then stable > experimental > unstable, then the pre-release number.
+    // "v2.1.1" > "v2.1.1-experimental.3" > "v2.1.1-experimental.1" > "2.1.0"
     static bool Newer(const std::string& tag, const std::string& current);
 
 private:
@@ -35,6 +40,8 @@ private:
     std::thread worker_;
     State state_ = Idle;
     std::string status_, version_, url_, notes_, digest_;
+    std::string channel_ = "stable";
+    bool prerelease_ = false;          // the update on offer is a pre-release
     std::vector<std::string> log_;
 };
 

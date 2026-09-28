@@ -1,6 +1,8 @@
 #include "checks.h"
+#include "screens.h"
 #include "tweaks.h"
 #include "util.h"
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <regex>
@@ -133,6 +135,22 @@ std::vector<Check> RunChecks(const SystemInfo& sys, const IniSettings& settings)
                                 Link(L"ms-settings:display-advanced"), "Click to open display settings."));
         } else {
             list.push_back(Make(Check::Ok, "Display at max refresh (" + std::to_string(hz) + " Hz)", "Your main display is running at its highest refresh rate."));
+        }
+    }
+
+    // Screens at different refresh rates: a video on one while gaming on the other can stutter
+    {
+        auto scr = screens::All();
+        std::vector<int> rates;
+        for (auto& s : scr) if (s.hz > 1 && std::find(rates.begin(), rates.end(), s.hz) == rates.end()) rates.push_back(s.hz);
+        if (scr.size() >= 2 && rates.size() >= 2) {
+            std::sort(rates.rbegin(), rates.rend());
+            std::string list2;
+            for (size_t i = 0; i < rates.size(); i++) list2 += (i ? " + " : "") + std::to_string(rates[i]) + " Hz";
+            list.push_back(Make(Check::Info, "Screens at " + list2,
+                                "Your screens run at different refresh rates. Playing a video or stream on one while you game on the other "
+                                "can make the game stutter. Project OptM notes it in the game's history when it happens - if those sessions "
+                                "stutter more, pause the video or run both screens at the same rate."));
         }
     }
 

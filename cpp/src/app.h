@@ -13,6 +13,7 @@
 #include "detect.h"
 #include "driverinfo.h"
 #include "frames.h"
+#include "insights.h"
 #include "latency.h"
 #include "netping.h"
 #include "imgui.h"
@@ -81,7 +82,10 @@ private:
     int OverlayIntervalMs() const;
     void OverlayPositioner();      // the Overlay page's picture of your screen: drag the overlay into place
     HWND GameWindow();             // the running game's main window (cached)
-    void Balloon(const char* text, DWORD icon = NIIF_INFO);
+    void Balloon(const char* text, DWORD icon = NIIF_INFO, const char* title = nullptr);
+    void SessionSummary(const Session& s, const std::string& vsLast);   // the notification when a game closes
+    void BackupNow();
+    void RestoreNow();
 
     // actions
     void ToggleAuto();
@@ -213,6 +217,11 @@ private:
     uint64_t lastSample_ = 0, sesStartMs_ = 0;
     size_t logMark_ = SIZE_MAX;    // first log line of the session being started (SIZE_MAX = none)
     std::string lastCause_;        // stutter-cause finder result of the session that just ended
+    std::vector<insights::HeatSample> heat_;   // one a second: GPU temp, GPU use, FPS
+    int otherVideoSec_ = 0, otherVideoHz_ = 0, sesHz_ = 0, sampleN_ = 0;
+    bool hotWarned_ = false;
+    std::string otherVideoApp_;
+    std::string balloonGame_;      // the summary notification on screen is about this game (a click opens its history)
     std::vector<LatencyTrace::Driver> causes_;
 
     // "Is this a game?"

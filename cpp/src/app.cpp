@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "insights.h"
 #include "json.h"
+#include "screens.h"
 #include "share.h"
 #include "tweaks.h"
 #include "tweakset.h"
@@ -115,6 +116,7 @@ void App::Init(HWND hwnd, float dpiScale) {
     Log("Project OptM v" OPTM_VERSION_LABEL " starting");
     sys_.Detect();
     data_.Load();
+    updater_.SetChannel(data_.UpdateChannel());   // before anything (a test switch) can start a check
     int imported = data_.ImportOtherHistory();
     snprintf(hexBuf_, sizeof(hexBuf_), "%s", data_.theme.accent.c_str());
     snprintf(nameBuf_, sizeof(nameBuf_), "%s", data_.greetName.c_str());
@@ -190,6 +192,49 @@ void App::Init(HWND hwnd, float dpiScale) {
             if (wcscmp(argv[i], L"--search") == 0) snprintf(gameSearch_, sizeof(gameSearch_), "%s", util::Narrow(argv[i + 1]).c_str());
             if (wcscmp(argv[i], L"--tour") == 0) TourGo(_wtoi(argv[i + 1]));   // open the tour at a step (screenshots)
             if (wcscmp(argv[i], L"--history-tab") == 0) historyTab_ = _wtoi(argv[i + 1]);   // 0 sessions, 1 compare, 2 tests
+            if (!util::EnvVar(L"OPTM_DATA_DIR").empty()) {   // test copies: backup / restore / summary without dialogs
+                std::string err;
+                if (wcscmp(argv[i], L"--backup-to") == 0)
+                    Log(data_.ExportBackup(argv[i + 1], err) ? "backup written: " + util::Narrow(argv[i + 1]) : "backup failed: " + err);
+                if (wcscmp(argv[i], L"--restore-from") == 0) {
+                    bool ok = data_.ImportBackup(argv[i + 1], err);
+                    if (ok) { ApplyTheme(); updater_.SetChannel(data_.UpdateChannel()); opt_.RefreshTweaks(); }
+                    Log(ok ? "restored: " + Plural(data_.profiles.size(), "game") + ", " + Plural(data_.history.size(), "session") : "restore failed: " + err);
+                }
+                if (wcscmp(argv[i], L"--insights-selftest") == 0 && wcscmp(argv[i + 1], L"1") == 0) {   // heat + FPS cap math
+                    auto run = [&](const char* name, float t1, float t2, float g, float f1, float f2) {
+                        std::vector<insights::HeatSample> v;
+                        for (int k = 0; k < 150; k++) v.push_back({ t1, g, f1 });
+                        for (int k = 0; k < 150; k++) v.push_back({ t2, g, f2 });
+                        insights::Heat h = insights::HeatOf(v);
+                        char b[160]; snprintf(b, sizeof(b), "heat %s: hot %ds, drop %.0f%%, max %.0f", name, h.hotSeconds, h.drop, h.maxTemp);
+                        Log(b);
+                    };
+                    run("cool->hot, FPS -15%, GPU-bound", 70, 88, 98, 150, 128);
+                    run("cool->hot, same FPS", 70, 88, 98, 150, 149);
+                    run("cool->hot, FPS -15%, CPU-bound", 70, 88, 60, 150, 128);
+                    run("always cool", 65, 72, 98, 150, 120);
+                    auto cap = [&](const char* name, int hz, double avg, double f5) {
+                        Session s; s.hz = hz; s.avgFps = avg; s.fps5 = f5; s.fpsSeconds = 600;
+                        int c = 0;
+                        std::string a = insights::CapAdvice(s, "AMD", c);
+                        Log(std::string("cap ") + name + ": " + (a.empty() ? "(no advice)" : std::to_string(c) + " - " + a));
+                    };
+                    cap("240 Hz, avg 300", 240, 300, 250);
+                    cap("240 Hz, avg 180, 5% 110", 240, 180, 110);
+                    cap("144 Hz, avg 120, 5% 100", 144, 120, 100);
+                    cap("60 Hz, avg 58", 60, 58, 50);
+                    cap("165 Hz, avg 160, 5% 70", 165, 160, 70);
+                }
+                if (wcscmp(argv[i], L"--check-updates") == 0) {   // check now, as a manual check (logs the result); arg = channel
+                    updater_.SetChannel(util::Narrow(argv[i + 1]));
+                    lastUpdateCheck_ = Ms();
+                    updater_.Check(true);
+                }
+                if (wcscmp(argv[i], L"--summary-last") == 0)   // show the summary of that game's latest session
+                    for (auto it = data_.history.rbegin(); it != data_.history.rend(); ++it)
+                        if (it->game == util::Narrow(argv[i + 1])) { SessionSummary(*it, "+6 avg, +3 low vs last session"); break; }
+            }
             if (wcscmp(argv[i], L"--import-code") == 0) { importOpen_ = true; snprintf(importBuf_, sizeof(importBuf_), "%s", util::Narrow(argv[i + 1]).c_str()); }
             if (wcscmp(argv[i], L"--import-add") == 0 && !util::EnvVar(L"OPTM_DATA_DIR").empty()) {   // add a game from a code (test copies)
                 GameProfile p; std::string err;
@@ -469,7 +514,8 @@ void App::Update() {
     }
     if (testZoom_ > 0 && now - startMs_ > 1000) { SetZoom(testZoom_); testZoom_ = 0; }
     if (now - lastTick_ >= (uint64_t)data_.settings.poll * 1000) Tick();
-    if (data_.autoUpdate && updater_.Enabled() && !opt_.Active() && now - lastUpdateCheck_ >= 6ull * 3600 * 1000) {
+    // (unstable builds are mid-work: they only update when you ask, so a check can't replace them)
+    if (data_.autoUpdate && updater_.Enabled() && strcmp(OPTM_CHANNEL, "unstable") && !opt_.Active() && now - lastUpdateCheck_ >= 6ull * 3600 * 1000) {
         lastUpdateCheck_ = now;
         updater_.Check(false);
     }
@@ -569,6 +615,10 @@ void App::SessionStarted(const GameProfile& p) {
         sesStartMs_ = Ms();
         causes_.clear();
         exits_.Clear();
+        heat_.clear();
+        otherVideoSec_ = otherVideoHz_ = sesHz_ = sampleN_ = 0;
+        hotWarned_ = false;
+        otherVideoApp_.clear();
     }
     SYSTEM_POWER_STATUS ps;
     if (fresh && sys_.hasBattery && GetSystemPowerStatus(&ps) && ps.ACLineStatus == 0) {
@@ -602,6 +652,30 @@ void App::SessionSample() {
     if (r.cpuPct >= 0) { sesCpuSum_ += r.cpuPct; sesCpuN_++; }
     auto spans = frames_.TakeStutterSpans();
     if (latency_.Running() && !spans.empty()) latency_.AddStutters(spans);
+    // heat: temperature, GPU load and FPS together, to tell a hot GPU from one that's slowing down
+    const auto& buf = frames_.Buffer();
+    double fps = buf.size() >= 10 ? frames::Stats(buf).fps : 0;
+    if (heat_.size() < 6 * 3600) heat_.push_back({ (float)r.gpuTempC, (float)r.gpuPct, (float)fps });
+    if (!hotWarned_ && heat_.size() >= 60 &&   // a whole minute at 90 C+: say so once per session
+        std::all_of(heat_.end() - 60, heat_.end(), [](const insights::HeatSample& h) { return h.temp >= 90; })) {
+        hotWarned_ = true;
+        Log("  ! GPU at 90 C or more for a minute - it may start slowing itself down");
+    }
+    // every 5 s: the game's screen, and whether a video plays on another screen
+    if (sampleN_++ % 5 == 0) {
+        HWND game = GameWindow();
+        if (!util::EnvVar(L"OPTM_TEST_GAME_WINDOW").empty() && !util::EnvVar(L"OPTM_DATA_DIR").empty())
+            game = FindWindowW(util::EnvVar(L"OPTM_TEST_GAME_WINDOW").c_str(), nullptr);   // test copies: the stand-in
+        if (game) { int hz = screens::RefreshOf(game); if (hz) sesHz_ = hz; }
+        std::string app;
+        int hz = 0;
+        if (game && screens::MediaOnOtherScreen(game, app, hz)) {
+            if (otherVideoApp_.empty()) Log("  Media playing in " + app + " on your other screen" + (hz ? " (" + std::to_string(hz) + " Hz)" : "") + " - noted, it can cause stutter");
+            otherVideoSec_ += 5;
+            otherVideoApp_ = app;
+            otherVideoHz_ = hz;
+        }
+    }
 }
 
 void App::SessionEnded(const GameProfile& p, double minutes, bool gameClosed) {
@@ -667,7 +741,19 @@ void App::SessionEnded(const GameProfile& p, double minutes, bool gameClosed) {
         if (sesCpuN_) s.cpuAvg = sesCpuSum_ / sesCpuN_;
         s.pingAvg = pingAvg;
         s.cause = lastCause_;
+        s.hz = sesHz_ ? sesHz_ : sys_.dispHz;
+        if (hasFps) s.fps5 = std::round(frames_.SessionLowPct(0.05) * 10) / 10;
+        insights::Heat heat = insights::HeatOf(heat_);
+        s.hotSeconds = heat.hotSeconds;
+        s.heatDrop = heat.drop;
+        s.otherVideoSeconds = otherVideoSec_;
         data_.AddSession(s, OPTM_VERSION);
+        std::string hn = insights::HeatNote(s);
+        if (!hn.empty()) Log("  ! " + hn);
+        if (s.otherVideoSeconds >= 60)
+            Log("  Media played in " + otherVideoApp_ + " on your other screen for " + util::FormatDuration(s.otherVideoSeconds / 60.0) +
+                (otherVideoHz_ && s.hz && otherVideoHz_ != s.hz ? " (" + std::to_string(otherVideoHz_) + " Hz vs the game's " + std::to_string(s.hz) + " Hz)" : ""));
+        if (data_.summaryOn && exitInfo.empty() && minutes >= 1) SessionSummary(s, lastCompare_);
     }
     if (opt_.SessionCleanups() > 0) extra += ", RAM cleared " + std::to_string(opt_.SessionCleanups()) + "x";
     Log("<< " + p.name + (gameClosed ? " closed after " : " session ended after ") + util::FormatDuration(minutes) + extra + " - everything restored");
@@ -680,12 +766,42 @@ void App::SessionEnded(const GameProfile& p, double minutes, bool gameClosed) {
             std::string winner;
             std::string v = insights::Verdict(test, insights::Of(data_.history, p.name, test.a, test.since), insights::Of(data_.history, p.name, test.b, test.since), winner);
             Log(">> Test finished for " + p.name + ": " + v);
-            Balloon(("Test finished for " + p.name + ". See its history for the result.").c_str());
+            Balloon(("Test finished for " + p.name + ". Click to see the result.").c_str());
+            balloonGame_ = p.name;
             data_.AddTimeline("test", p.name + ": " + v);
         } else if (!insights::Counts(data_.history.empty() ? Session() : data_.history.back()))
             Log("  Test: this session was too short to count (it needs 5+ minutes with FPS)");
     }
     sesVariant_.clear();
+}
+
+// The notification when a game closes: its numbers, how they compare, and anything worth a look.
+// A click opens the game's history.
+void App::SessionSummary(const Session& s, const std::string& vsLast) {
+    char line[160];
+    std::string text;
+    if (s.avgFps > 0) {
+        snprintf(line, sizeof(line), "avg %.0f FPS  |  1%% low %.0f", s.avgFps, s.low1);
+        text = line;
+        if (s.stutters >= 0) text += "  |  " + Plural(s.stutters, "stutter");
+        if (!vsLast.empty()) text += "\n" + vsLast;
+    } else {
+        text = "No FPS this time (the graph was off or the game blocks capture).";
+    }
+    std::vector<std::string> notes;
+    if (s.hotSeconds >= 60) notes.push_back(s.heatDrop > 0 ? "GPU got hot and slowed down" : "GPU ran hot");
+    if (s.otherVideoSeconds >= 60) notes.push_back("video on your other screen");
+    int cap = 0;
+    if (!insights::CapAdvice(s, sys_.gpus.empty() ? "" : sys_.gpus[0].vendor, cap).empty()) notes.push_back("FPS cap tip: " + std::to_string(cap));
+    if (!notes.empty()) text += "\n" + util::Join(notes, ", ") + " - click for details";
+    std::string title = s.game + "  -  " + util::FormatDuration(s.minutes);
+    Balloon(text.c_str(), NIIF_INFO, title.c_str());
+    balloonGame_ = s.game;
+    if (!util::EnvVar(L"OPTM_DATA_DIR").empty()) {   // test copies: what it said
+        std::string one = text;
+        for (auto& ch : one) if (ch == '\n') ch = '/';
+        Log("summary: " + title + " | " + one);
+    }
 }
 
 // A running test decides this session's setup (the profile itself isn't changed)
@@ -756,12 +872,13 @@ void App::UpdateTray() {
     Shell_NotifyIconW(NIM_MODIFY, &nid_);
 }
 
-void App::Balloon(const char* text, DWORD icon) {
+void App::Balloon(const char* text, DWORD icon, const char* title) {
     if (!trayAdded_) return;
+    balloonGame_.clear();   // SessionSummary sets it again for its own
     NOTIFYICONDATAW n = nid_;
     n.uFlags = NIF_INFO;
     n.dwInfoFlags = icon;
-    wcscpy_s(n.szInfoTitle, L"Project OptM");
+    wcscpy_s(n.szInfoTitle, util::Widen(title ? title : "Project OptM").substr(0, 63).c_str());
     wcscpy_s(n.szInfo, util::Widen(text).substr(0, 255).c_str());
     Shell_NotifyIconW(NIM_MODIFY, &n);
 }
@@ -774,6 +891,13 @@ void App::OnTaskbarCreated() {   // Explorer restarted: put the icon back
 }
 
 void App::OnTray(LPARAM lp) {
+    if (lp == NIN_BALLOONUSERCLICK && !balloonGame_.empty()) {   // the session summary: open that game's history
+        Log("Opening " + balloonGame_ + "'s history (from the notification)");
+        historyGame_ = balloonGame_;
+        balloonGame_.clear();
+        ShowMain();
+        return;
+    }
     if (lp == WM_LBUTTONDBLCLK || lp == WM_LBUTTONUP) { ShowMain(); return; }
     if (lp != WM_RBUTTONUP && lp != WM_CONTEXTMENU) return;
     HMENU m = CreatePopupMenu();
@@ -2056,6 +2180,23 @@ void App::HistoryPopup() {
     ImGui::TextColored(kSub, "%s", head.c_str());
     std::string crashes = insights::CrashPattern(data_.history, historyGame_);
     if (!crashes.empty()) ImGui::TextColored(Hex("#F0605D"), "%s", crashes.c_str());
+    // tips from the latest session with FPS: an FPS cap, heat, a video on the other screen
+    {
+        const Session* last = nullptr;
+        for (auto it = rows.rbegin(); it != rows.rend() && !last; ++it) if ((*it)->avgFps > 0) last = *it;
+        ImGui::PushTextWrapPos(0);
+        if (last) {
+            int cap = 0;
+            std::string adv = insights::CapAdvice(*last, sys_.gpus.empty() ? "" : sys_.gpus[0].vendor, cap);
+            if (!adv.empty()) ImGui::TextColored(g_accent, "FPS cap tip: %s", adv.c_str());
+            std::string hn = insights::HeatNote(*last);
+            if (!hn.empty()) ImGui::TextColored(kAmber, "Heat (last session): %s", hn.c_str());
+            if (last->otherVideoSeconds >= 60)
+                ImGui::TextColored(kAmber, "A video or stream played on your other screen for %s of the last session. If it stuttered, try pausing it next time.",
+                                   util::FormatDuration(last->otherVideoSeconds / 60.0).c_str());
+        }
+        ImGui::PopTextWrapPos();
+    }
     ImGui::Dummy(ImVec2(0, 4 * s_));
 
     int tab = 0;
@@ -2162,6 +2303,8 @@ void App::HistoryPopup() {
             if (!r->exit.empty()) notes.push_back(r->exit == "hang" ? "not responding" : r->exit);
             if (!r->variant.empty()) notes.push_back("test");
             if (!r->cause.empty()) notes.push_back("stutters: " + r->cause);
+            if (r->hotSeconds >= 60) notes.push_back(r->heatDrop > 0 ? "hot, slowed down" : "GPU hot");
+            if (r->otherVideoSeconds >= 60) notes.push_back("video on other screen");
             if (!r->preset.empty() && notes.empty()) notes.push_back(r->preset);
             ImGui::TextColored(r->exit.empty() ? kDim : Hex("#F0605D"), "%s", util::Join(notes, ", ").c_str());
             if (ImGui::IsItemHovered() && !r->tweaks.empty()) {
@@ -3307,6 +3450,15 @@ void App::PageSettings() {
         ReloadProfiles();
         snprintf(hexBuf_, sizeof(hexBuf_), "%s", data_.theme.accent.c_str());
     }
+    if (ImGui::Button("Back up everything...")) BackupNow();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Saves your games, settings, presets, play history and timeline in one file -\n"
+                          "for a new PC, a Windows reinstall, or just to be safe.");
+    ImGui::SameLine();
+    if (ImGui::Button("Restore from backup...")) RestoreNow();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Puts a backup's games, settings and history back. What you have now is kept in a\n"
+                          "backup-before-restore folder in the data folder, in case you change your mind.");
     EndCard();
     ImGui::Dummy(ImVec2(0, 6 * s_));
 
@@ -3320,6 +3472,30 @@ void App::PageSettings() {
     if (ImGui::Button("Check for updates")) { lastUpdateCheck_ = Ms(); updater_.Check(true); }
     ImGui::SameLine();
     if (toggle(data_.autoUpdate ? "Auto-check: ON" : "Auto-check: OFF", data_.autoUpdate)) { data_.autoUpdate = !data_.autoUpdate; data_.SaveConfig(); }
+    // which builds to get: stable releases only, or experimental pre-releases too
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(kSub, "Update channel");
+    const std::pair<const char*, const char*> chans[] = {
+        { "stable", "Stable" }, { "experimental", "Experimental" } };
+    for (auto& [id, label] : chans) {
+        ImGui::SameLine();
+        if (toggle(label, data_.UpdateChannel() == id)) {
+            data_.updateChannel = id;
+            data_.SaveConfig();
+            updater_.SetChannel(id);
+            Log(std::string("Update channel: ") + label + (std::string(id) == "experimental"
+                ? " - you'll also get experimental pre-releases (new features early, sometimes rough)"
+                : " - only full releases from now on"));
+            lastUpdateCheck_ = Ms();
+            updater_.Check(true);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", std::string(id) == "stable"
+                ? "Full releases only - tested and meant for everyone. The safe choice."
+                : "Experimental pre-releases too: new features before everyone else. Each one has been tried, but\n"
+                  "not everything is proven on every PC yet. You can switch back to Stable any time\n"
+                  "(you keep the experimental build until the next stable release is newer).");
+    }
     ImGui::EndDisabled();
     if (ImGui::Button("Show the tour again")) StartTour();
     ImGui::SameLine();
@@ -4081,6 +4257,57 @@ bool App::ImportGame(GameProfile p) {
     return true;
 }
 
+// ------------------------------------------------------------ backup / restore
+void App::BackupNow() {
+    wchar_t file[MAX_PATH * 2] = {};
+    std::wstring name = L"ProjectOptM-backup-" + util::Widen(util::NowStamp("%Y-%m-%d")) + L".optm";
+    wcscpy_s(file, name.c_str());
+    wchar_t docs[MAX_PATH] = {};
+    SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, 0, docs);
+    OPENFILENAMEW ofn = { sizeof(ofn) };
+    ofn.hwndOwner = hwnd_;
+    ofn.lpstrFilter = L"Project OptM backup (*.optm)\0*.optm\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH * 2;
+    ofn.lpstrTitle = L"Back up Project OptM";
+    ofn.lpstrDefExt = L"optm";
+    ofn.lpstrInitialDir = docs;
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameW(&ofn)) return;
+    std::string err;
+    if (data_.ExportBackup(file, err)) Log("Backed up your games, settings and history to " + util::Narrow(file));
+    else Msg(hwnd_, "Couldn't make the backup: " + err + ".", "Project OptM", MB_OK | MB_ICONWARNING);
+}
+
+void App::RestoreNow() {
+    if (opt_.Active()) { Msg(hwnd_, "Close " + opt_.Active()->name + " first - a backup can't be restored while a game is being optimized.", "Project OptM", MB_OK | MB_ICONINFORMATION); return; }
+    wchar_t file[MAX_PATH * 2] = {};
+    OPENFILENAMEW ofn = { sizeof(ofn) };
+    ofn.hwndOwner = hwnd_;
+    ofn.lpstrFilter = L"Project OptM backup (*.optm)\0*.optm\0All files (*.*)\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH * 2;
+    ofn.lpstrTitle = L"Restore Project OptM from a backup";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return;
+    if (Msg(hwnd_, "Replace your games, settings and play history with the ones in this backup?\n\n"
+                   "What you have now is kept in a backup-before-restore folder in the data folder.",
+            "Project OptM", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    std::string err;
+    if (!data_.ImportBackup(file, err)) { Msg(hwnd_, "Couldn't restore: " + err + ".", "Project OptM", MB_OK | MB_ICONWARNING); return; }
+    ApplyTheme();
+    snprintf(hexBuf_, sizeof(hexBuf_), "%s", data_.theme.accent.c_str());
+    snprintf(nameBuf_, sizeof(nameBuf_), "%s", data_.greetName.c_str());
+    updater_.SetChannel(data_.UpdateChannel());
+    opt_.RefreshTweaks();
+    opt_.SyncLaunchPriority();
+    opt_.SyncPerGameSettings();
+    rescale_ = true;
+    lastTick_ = 0;
+    Log("Restored from " + util::Narrow(file) + " - " + Plural(data_.profiles.size(), "game") + ", " + Plural(data_.history.size(), "session"));
+    data_.AddTimeline("fix", "Restored games, settings and history from a backup");
+}
+
 // ------------------------------------------------------------ System page: graphics driver
 void App::RefreshShaderCache() {
     if (cacheJob_.valid()) return;
@@ -4154,6 +4381,14 @@ void App::ExperimentalCard() {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Finds the server the game talks to (from Windows' network statistics) and pings it every 2 seconds.\n"
                           "Shown on Home and in the overlay (add Ping on the Overlay page). Some servers don't answer pings.");
+    if (toggle(data_.summaryOn ? "Summary when a game closes: ON" : "Summary when a game closes: OFF", data_.summaryOn)) {
+        data_.summaryOn = !data_.summaryOn;
+        data_.SaveConfig();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("A notification with the session's FPS, 1%% lows and stutters, how it compares with last time,\n"
+                          "and heat or FPS cap tips. Click it to open the game's history.");
+    ImGui::SameLine();
     if (toggle(data_.askGames ? "Ask about full-screen apps: ON" : "Ask about full-screen apps: OFF", data_.askGames)) {
         data_.askGames = !data_.askGames;
         data_.SaveConfig();

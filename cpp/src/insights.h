@@ -37,6 +37,17 @@ std::string Verdict(const Test& t, const Stats& a, const Stats& b, std::string& 
 // "Crashed in 3 of 5 sessions with Aggressive tweaks, 0 of 8 with Safe" ("" = nothing to say)
 std::string CrashPattern(const std::vector<Session>& h, const std::string& game);
 
+// Heat: one sample a second while playing. "Hot" is 85 C or more on the GPU's sensor. A likely throttle is
+// FPS 10%+ lower while hot than while cool (under 80 C), both times at 90%+ GPU use (so the GPU was the limit).
+struct HeatSample { float temp, gpu, fps; };
+struct Heat { int hotSeconds = 0; double drop = 0, maxTemp = -1; };
+Heat HeatOf(const std::vector<HeatSample>& samples);
+std::string HeatNote(const Session& s);                         // "" = nothing to say
+
+// FPS cap: over the refresh rate -> cap just under it; big swings -> cap near the 5% low. "" = no cap needed.
+// cap gets the suggested number. gpuVendor picks where to set it ("AMD" / "NVIDIA" / other).
+std::string CapAdvice(const Session& s, const std::string& gpuVendor, int& cap);
+
 // Two sessions side by side: one line per number that both have ("Avg FPS", "142", "151", "+9")
 struct Row { std::string what, a, b, diff; int better = 0; };   // better: 1 = b is better, -1 = a is, 0 = same
 std::vector<Row> Compare(const Session& a, const Session& b);

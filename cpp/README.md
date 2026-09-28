@@ -53,7 +53,14 @@ being changed and something in it hasn't been tried yet, call it unstable.
 1. Set `OPTM_CHANNEL` to `""` in `src/version.h` (see above) and raise `OPTM_VERSION` / `OPTM_VERSION_RC`.
 2. Commit and push (the front page is the `README.md` at the repo root).
 3. Double-click **Publish-Release.bat**. It builds, asks what changed, and publishes a GitHub release
-   with `ProjectOptM.exe`.
+   with `ProjectOptM.exe`, titled "Project OptM vX.Y.Z (Stable)" and marked latest.
+
+**Experimental pre-releases.** With `OPTM_CHANNEL "experimental"` and `OPTM_PRERELEASE` set to 1 (then 2, 3...
+for the next ones of the same version), Publish-Release.bat publishes tag `vX.Y.Z-experimental.N` as a GitHub
+*pre-release*. Only people who chose Settings > Update channel: **Experimental** are offered it; stable users
+(and every older version of the app, which only asks for `releases/latest`) never see it. Unstable builds are
+refused. The app orders versions as numbers first, then stable > experimental > unstable, then N - so
+`2.1.1` (stable) replaces `2.1.1-experimental.3`, which replaces a local `2.1.1` experimental build (N = 0).
 
 Everyone on 1.1 or later gets the update from inside the app within a few hours. The updater
 checks the SHA-256 GitHub publishes for the file, keeps the previous exe in `%APPDATA%\ProjectOptM\backup`,
@@ -71,7 +78,8 @@ src/tweakset.*        the Tweaks page catalog: every tweak, its details, presets
 src/detect.*          finds new games (game libraries, Windows' game list, window size)
 src/checks.*          health checks and their one-click fixes
 src/frames.*          FPS capture (ETW: Microsoft-Windows-DXGI + D3D9 present events), FPS statistics, stutters
-src/insights.*        game tests (CCD, tweak A/B), session comparison, crash patterns - pure functions over history
+src/insights.*        game tests (CCD, tweak A/B), session comparison, crash patterns, heat, FPS cap advice - pure functions
+src/screens.*         screen refresh rates; a video / stream playing on another screen (audio meters + window positions)
 src/crashes.*         crash detection: exit codes + Windows Error Reporting events (Application log 1000/1002)
 src/latency.*         stutter-cause finder: kernel DPC/ISR trace (system logger session), matched against stutters
 src/netping.*         server ping: Kernel-Network ETW finds the game's server, ICMP pings it
@@ -261,6 +269,25 @@ optimizing itself works the same for every game. Capturing needs admin rights, w
 - **Share codes**: game settings > Copy share code; Games > Add from code shows what a code adds first.
 - **Timeline** (Activity): every session's changes and their undo, crashes, tests, fixes and Windows settings
   (`timeline.json`, last 400), plus what's still changed on the PC with a button to put it back now.
+- **Heat warnings**: one sample a second (GPU temp, GPU use, FPS). Sessions keep the seconds at 85 C+; a likely
+  throttle is FPS 10%+ lower while hot than while under 80 C, both at 90%+ GPU use (so a CPU-bound game or a
+  quieter scene doesn't count). A whole minute at 90 C+ is logged live. (GPU sensor only - Windows doesn't
+  report CPU temperature without a driver.)
+- **FPS cap advice** (history window, summary): FPS above the refresh rate -> cap at refresh - 3 (keeps VRR in
+  range); big swings (5% low under 75% of the average) -> a cap near the 5% low, only if it keeps 60%+ of the
+  average. Where to set it depends on the GPU maker. Sessions keep `Hz` (the game's screen) and `Fps5`.
+- **Video on the other screen**: every 5 s during a session, a browser or video player that is making sound
+  (Windows' per-app audio meters) with a window on another screen is counted (`OtherVideoSeconds`). A health
+  check says so when your screens run at different refresh rates.
+- **Session summary** (Settings > Test features, on by default): a notification when a game closes - FPS,
+  lows, stutters, vs last time, and heat / video / cap notes. A click opens that game's history.
+- **Update channel** (Settings > Updates): Stable (`releases/latest`) or Experimental (the newest of the last
+  20 releases, pre-releases included; drafts and unstable tags are skipped). Defaults to the running build's
+  channel. Unstable builds never auto-check.
+- **Backup and restore** (Settings > Profiles and data): one `.optm` file (JSON) with profiles.ini,
+  settings.json, history.csv, session-details.json and timeline.json. This PC's state (crash-recovery backups,
+  launch priority / GPU / FSO records, paused services, power plan, driver version) is never exported, and on
+  restore the current PC's values are kept. The files being replaced go to `backup-before-restore-<time>`.
 
 ## Developer switches
 
@@ -291,5 +318,12 @@ Handy for testing without touching your real setup:
 | `--ask-game <exe path>` (`--ask-answer 1\|0\|-1`, test copies) | show the "Is this a game?" card for an exe (and answer it) |
 | `OPTM_TEST_FOREGROUND=<window class>` + `OPTM_TEST_ASK_SECS=<s>` | test copies: treat that (hidden) window as the foreground app, and ask after that many seconds |
 | `OPTM_TEST_CLOUD=<exe names>` | test copies: the "cloud apps" the Pause cloud sync tweak closes (stand-ins) |
+| `--insights-selftest 1` (test copies) | log the heat and FPS-cap results for made-up cases |
+| `--summary-last <game>` (test copies) | show the session summary for that game's latest session (and log its text) |
+| `--backup-to <file>` / `--restore-from <file>` (test copies) | back up / restore without the file dialogs |
+| `--check-updates stable\|experimental` (test copies) | check for updates on that channel at start, logging the result |
+| `OPTM_TEST_UPDATE_BASE=<url>` | test copies: ask this server instead of api.github.com (e.g. `http://127.0.0.1:8765/repos/test`) |
+| `OPTM_UPDATE_AS=<version>` | also takes channel tags, e.g. `2.1.1-experimental.2` |
+| `OPTM_TEST_GAME_WINDOW=<window class>` | test copies: the window treated as the game's (second-screen video check) |
 
 A test copy (`--data-dir`) runs without admin and never asks for it (anything needing admin then fails and is logged).

@@ -54,6 +54,11 @@ struct Session {
     double gpuTempAvg = -1, gpuTempMax = -1, cpuAvg = -1, pingAvg = -1;
     std::string cause;                     // stutter-cause finder: the driver behind most stutters
     std::vector<std::string> tweaks;       // tweak ids that were on
+    int hz = 0;                            // refresh rate of the screen the game was on
+    double fps5 = 0;                       // 5% low FPS (95% of frames were faster) - for FPS cap advice
+    int hotSeconds = 0;                    // seconds the GPU was at 85 C or more
+    double heatDrop = 0;                   // % lower FPS while hot and fully loaded (0 = no sign of throttling)
+    int otherVideoSeconds = 0;             // seconds a video / stream played on another screen
     double StuttersPerMin() const { return stutters >= 0 && fpsSeconds >= 30 ? stutters * 60.0 / fpsSeconds : -1; }
 };
 
@@ -110,6 +115,14 @@ struct AppData {
     bool askGames = true;                              // "Is this a game?" for full-screen apps without a profile
     std::string gpuDriverSeen;                         // graphics driver version at the last start (shader cache hint)
     std::vector<std::string> timeline;                 // "yyyy-MM-dd HH:mm:ss|kind|text", newest last
+    bool summaryOn = true;                             // a notification with the numbers when a game closes
+    std::string updateChannel;                         // "stable" / "experimental" ("" = this build's own channel)
+    std::string UpdateChannel() const;                 // the one in use
+
+    // Backup / restore: one file with profiles, settings, history, details and timeline.
+    // PC-specific state (crash recovery lists, launch priority records...) is left out and never restored.
+    bool ExportBackup(const std::wstring& file, std::string& error) const;
+    bool ImportBackup(const std::wstring& file, std::string& error);   // the current files are kept in backup-before-restore-<time>
 
     // history.csv
     std::vector<Session> history;

@@ -11,10 +11,13 @@ exit /b
 #  PROJECT OPTM - one-click release publisher (C++ edition)
 #
 #  Double-click it from this folder. It will:
-#   1. read the version from src\version.h (OPTM_VERSION)
+#   1. read the version and channel from src\version.h (OPTM_VERSION, OPTM_CHANNEL, OPTM_PRERELEASE)
 #   2. build dist\ProjectOptM.exe with Build.bat
 #   3. ask what changed
-#   4. publish a GitHub release (tag v<version>) with ProjectOptM.exe attached
+#   4. publish a GitHub release with ProjectOptM.exe attached:
+#        stable        tag v<version>, "(Stable)", marked latest - everyone gets it
+#        experimental  tag v<version>-experimental.<N>, a pre-release - only the Experimental update channel
+#        unstable      refused - unstable builds are never published
 #
 #  The source and the front page (README.md) go up with git - push before
 #  publishing, so the release tag points at the code it was built from.
@@ -59,18 +62,38 @@ try {
   $text = [IO.File]::ReadAllText($Ver)
   if ($text -notmatch '#define OPTM_VERSION\s+"([0-9]+(\.[0-9]+){1,3})"') { throw 'Could not find OPTM_VERSION in src\version.h.' }
   $ver = $Matches[1]; $tag = "v$ver"
+  # Release channel (see README > Release channels): stable = a full release, experimental = a GitHub
+  # pre-release (only people who picked the Experimental update channel get it), unstable = never published
+  $channel = if ($text -match '#define OPTM_CHANNEL\s+"([a-z]*)"') { $Matches[1] } else { '' }
+  $preNum = if ($text -match '#define OPTM_PRERELEASE\s+([0-9]+)') { [int]$Matches[1] } else { 0 }
+  if ($channel -eq 'unstable') { throw 'This is an UNSTABLE build (OPTM_CHANNEL in src\version.h) - unstable builds are never published. Set it to "experimental" or "" first.' }
+  $pre = $channel -ne ''
+  if ($pre) {
+    if ($preNum -lt 1) { throw 'Experimental builds are numbered: set OPTM_PRERELEASE in src\version.h to 1 (or one more than the last experimental of this version).' }
+    $tag = "v$ver-$channel.$preNum"
+    $title = "Project OptM v$ver (Experimental $preNum)"
+  } else {
+    $title = "Project OptM $tag (Stable)"
+  }
   if ($text -notmatch [regex]::Escape("#define OPTM_UPDATE_REPO   `"$Repo`"")) { Say "  Warning: OPTM_UPDATE_REPO in src\version.h is not '$Repo' - users won't get updates." Yellow }
   $rcParts = (@($ver.Split('.')) + @('0', '0', '0'))[0..3] -join ',\s*'
   if ($text -notmatch "OPTM_VERSION_RC\s+$rcParts\b") { Say '  Warning: OPTM_VERSION_RC in src\version.h does not match OPTM_VERSION.' Yellow }
 
   & $gh release view $tag --repo $Repo *> $null
-  if ($LASTEXITCODE -eq 0) { throw "$tag is already released. Raise OPTM_VERSION in src\version.h first (e.g. $ver -> next number)." }
-  $latest = "$(& $gh release view --repo $Repo --json tagName --jq .tagName 2>$null)".Trim()
-  if ($latest) {
-    Say "  Latest on GitHub:  $latest"
-    try { if ([version]$latest.TrimStart('v', 'V') -ge [version]$ver) { throw "The new version ($ver) must be higher than $latest." } } catch [System.Management.Automation.RuntimeException] { throw }
+  if ($LASTEXITCODE -eq 0) {
+    if ($pre) { throw "$tag is already released. Raise OPTM_PRERELEASE in src\version.h first ($preNum -> $($preNum + 1))." }
+    throw "$tag is already released. Raise OPTM_VERSION in src\version.h first (e.g. $ver -> next number)."
   }
-  Say "  Publishing:        $tag" Green
+  $latest = "$(& $gh release view --repo $Repo --json tagName --jq .tagName 2>$null)".Trim()   # the latest STABLE release
+  if ($latest) {
+    Say "  Latest stable:     $latest"
+    try {
+      $cmp = [version]$latest.TrimStart('v', 'V')
+      if (-not $pre -and $cmp -ge [version]$ver) { throw "The new version ($ver) must be higher than $latest." }
+      if ($pre -and $cmp -ge [version]$ver) { throw "An experimental $ver would be older than the stable $latest - raise OPTM_VERSION first." }
+    } catch [System.Management.Automation.RuntimeException] { throw }
+  }
+  Say "  Publishing:        $tag  ($(if ($pre) { 'EXPERIMENTAL pre-release - only the Experimental update channel gets it' } else { 'STABLE - everyone gets it' }))" Green
 
   # --- Build ---
   & cmd.exe /c "`"$(Join-Path $Here 'Build.bat')`" nopause"
@@ -88,7 +111,9 @@ try {
     $items += "- $($l.Trim())"
   }
   if ($items.Count -eq 0) { $items = @('- Improvements and fixes') }
-  $notes = "## Project OptM $tag`n`n### What's new`n" + ($items -join "`n")
+  $notes = "## $title`n`n"
+  if ($pre) { $notes += "> **Experimental build.** New features before the next stable release - each has been tried, but not everything is proven on every PC yet. You get it only with Settings > Update channel: Experimental.`n`n" }
+  $notes += "### What's new`n" + ($items -join "`n")
   $notesFile = Join-Path $env:TEMP 'optm-release-notes.md'
   [IO.File]::WriteAllText($notesFile, $notes)
 
@@ -103,12 +128,14 @@ try {
   if ($ok -notmatch '^[yY]') { Say '  Cancelled - nothing was published.' Yellow; return }
 
   # --- Publish ---
-  & $gh release create $tag $Exe --repo $Repo --title "Project OptM $tag" --notes-file $notesFile
+  if ($pre) { & $gh release create $tag $Exe --repo $Repo --title $title --notes-file $notesFile --prerelease }
+  else      { & $gh release create $tag $Exe --repo $Repo --title $title --notes-file $notesFile --latest }
   if ($LASTEXITCODE -ne 0) { throw 'Publishing the release failed (see the message above).' }
 
   Say ''
-  Say "  Done! $tag is live: https://github.com/$Repo/releases/latest" Green
-  Say '  Everyone running Project OptM will be offered the update within a few hours.' Gray
+  Say "  Done! $tag is live: https://github.com/$Repo/releases/tag/$tag" Green
+  if ($pre) { Say '  People on the Experimental update channel will be offered it within a few hours. Stable users never see it.' Gray }
+  else      { Say '  Everyone running Project OptM will be offered the update within a few hours.' Gray }
 }
 catch {
   Say ''
