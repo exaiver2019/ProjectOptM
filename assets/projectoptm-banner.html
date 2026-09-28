@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0B0D11; --card: #161A21; --card2: #11141A; --line: #262B35;
+    --accent: #4F8BFF; --accent2: #7AA8FF; --green: #3DDC84; --amber: #F5B942; --red: #F0605D;
+    --text: #EEF1F6; --sub: #9097A6; --dim: #5E6574;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; background: var(--bg); }
+  body {
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    color: var(--text); position: relative;
+    background:
+      radial-gradient(ellipse 620px 460px at 930px 330px, rgba(79,139,255,0.18), transparent 70%),
+      radial-gradient(ellipse 500px 300px at 120px 640px, rgba(79,139,255,0.07), transparent 70%),
+      var(--bg);
+  }
+  /* faint dot grid, fading out to the left */
+  .grid {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px);
+    background-size: 28px 28px;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 55%, #000 100%);
+  }
+  .left { position: absolute; left: 88px; top: 0; bottom: 0; width: 600px; display: flex; flex-direction: column; justify-content: center; }
+  .brand { display: flex; align-items: center; gap: 18px; margin-bottom: 34px; }
+  .brand svg { width: 64px; height: 64px; filter: drop-shadow(0 6px 18px rgba(79,139,255,0.35)); }
+  .eyebrow { font-size: 15px; font-weight: 600; letter-spacing: 0.22em; color: var(--sub); text-transform: uppercase; }
+  h1 { font-size: 86px; line-height: 0.98; font-weight: 700; letter-spacing: -0.02em; }
+  h1 span { color: var(--accent); }
+  .tag { margin-top: 26px; font-size: 25px; line-height: 1.4; color: var(--sub); max-width: 540px; }
+  .tag b { color: var(--text); font-weight: 600; }
+  .points { margin-top: 38px; display: flex; gap: 12px; }
+  .pt {
+    display: flex; align-items: center; gap: 9px; padding: 10px 16px; border-radius: 999px;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--line); font-size: 17px; font-weight: 600; color: #D7DCE5;
+  }
+  .pt i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; }
+
+  /* the app-style card on the right */
+  .card {
+    position: absolute; right: 88px; top: 50%; transform: translateY(-50%); width: 452px;
+    background: linear-gradient(180deg, #1A1F28, var(--card)); border: 1px solid #2A303C; border-radius: 18px;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(79,139,255,0.06);
+    padding: 24px 26px;
+  }
+  .status { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+  .status .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px rgba(61,220,132,0.7); }
+  .status .t { font-size: 17px; font-weight: 600; }
+  .status .s { font-size: 13px; color: var(--sub); margin-top: 2px; }
+  .label { margin-top: 18px; font-size: 11px; font-weight: 700; letter-spacing: 0.16em; color: var(--dim); }
+  .fpsrow { display: flex; align-items: flex-end; gap: 26px; margin-top: 6px; }
+  .fps { font-size: 64px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+  .fps small { font-size: 18px; color: var(--accent2); font-weight: 700; margin-left: 6px; letter-spacing: 0; }
+  .stats { font-size: 14px; color: var(--sub); line-height: 1.75; padding-bottom: 6px; }
+  .stats b { color: var(--text); font-weight: 600; margin-left: 8px; }
+  .graph { margin-top: 16px; height: 128px; border-radius: 10px; background: var(--card2); position: relative; overflow: hidden; }
+  .graph svg { position: absolute; inset: 0; }
+  .foot { display: flex; gap: 10px; margin-top: 16px; }
+  .chip { flex: 1; background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+  .chip .k { font-size: 11px; color: var(--dim); font-weight: 700; letter-spacing: 0.1em; }
+  .chip .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+
+  <div class="left">
+    <div class="brand">
+      <!-- the app's logo: black tile, accent ring, white needle -->
+      <svg viewBox="0 0 40 40">
+        <rect x="0.5" y="0.5" width="39" height="39" rx="9" fill="#0A0C10" stroke="#4F8BFF" stroke-opacity="0.55"/>
+        <circle cx="20" cy="20" r="11.5" fill="none" stroke="#4F8BFF" stroke-width="4.6"/>
+        <line x1="20" y1="20" x2="24.6" y2="15.4" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="20" cy="20" r="2.1" fill="#fff"/>
+      </svg>
+      <div class="eyebrow">Game optimizer for Windows</div>
+    </div>
+    <h1>Project <span>OptM</span></h1>
+    <p class="tag">Tunes Windows for the game you're playing – <b>and puts everything back</b> when you close it.</p>
+    <div class="points">
+      <div class="pt"><i style="background: var(--green)"></i>Live FPS &amp; stutters</div>
+      <div class="pt"><i style="background: var(--amber)"></i>Anti-cheat safe</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="status">
+      <div class="dot"></div>
+      <div>
+        <div class="t">Optimizing: Resident Evil 2</div>
+        <div class="s">V-Cache cores  |  Above normal priority  |  42m</div>
+      </div>
+    </div>
+    <div class="label">PERFORMANCE</div>
+    <div class="fpsrow">
+      <div class="fps">164<small>FPS</small></div>
+      <div class="stats">1% low<b>131</b><br>Frametime<b>6.1 ms</b></div>
+    </div>
+    <div class="graph"><svg id="g" width="400" height="128"></svg></div>
+    <div class="foot">
+      <div class="chip"><div class="k">0.1% LOW</div><div class="v">98</div></div>
+      <div class="chip"><div class="k">STUTTERS</div><div class="v" style="color: var(--amber)">1</div></div>
+      <div class="chip"><div class="k">GPU</div><div class="v">61°C</div></div>
+    </div>
+  </div>
+
+<script>
+  // a calm frametime line with one stutter marked, like the app's graph
+  const svg = document.getElementById('g'), W = 400, H = 128, n = 90;
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    let ms = 6.1 + Math.sin(i * 0.35) * 0.35 + (rnd() - 0.5) * 0.9;
+    if (i === 58) ms = 17.5;
+    pts.push([i * W / (n - 1), H - 14 - (ms / 20) * (H - 28)]);
+  }
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const ns = 'http://www.w3.org/2000/svg';
+  const add = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
+  const grad = add('linearGradient', { id: 'fill', x1: 0, y1: 0, x2: 0, y2: 1 });
+  grad.innerHTML = '<stop offset="0" stop-color="#4F8BFF" stop-opacity="0.28"/><stop offset="1" stop-color="#4F8BFF" stop-opacity="0"/>';
+  add('path', { d: line + ` L ${W} ${H} L 0 ${H} Z`, fill: 'url(#fill)' });
+  add('path', { d: line, fill: 'none', stroke: '#4F8BFF', 'stroke-width': 2.2, 'stroke-linejoin': 'round' });
+  const s = pts[58];
+  add('rect', { x: s[0] - 1.5, y: 6, width: 3, height: H - 12, fill: '#F0605D', opacity: 0.22, rx: 1.5 });
+  add('circle', { cx: s[0], cy: 10, r: 4, fill: '#F0605D' });
+</script>
+</body>
+</html>
