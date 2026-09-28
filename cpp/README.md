@@ -62,6 +62,12 @@ for the next ones of the same version), Publish-Release.bat publishes tag `vX.Y.
 refused. The app orders versions as numbers first, then stable > experimental > unstable, then N - so
 `2.1.1` (stable) replaces `2.1.1-experimental.3`, which replaces a local `2.1.1` experimental build (N = 0).
 
+**Stability badges.** Each release's notes start with shields.io badges between `<!-- optm-badges -->`
+markers: green **Stable**, amber **Experimental**, grey **Superseded by vX** (a newer release on the same
+channel exists) and red **Legacy** (v1.0.0, the .bat that can't update itself). Publish-Release.bat adds the
+new release's badge and marks the previous release on that channel superseded; the notes below the markers
+are never touched.
+
 Everyone on 1.1 or later gets the update from inside the app within a few hours. The updater
 checks the SHA-256 GitHub publishes for the file, keeps the previous exe in `%APPDATA%\ProjectOptM\backup`,
 and restarts into the new version.
