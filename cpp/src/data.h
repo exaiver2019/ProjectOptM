@@ -1,6 +1,7 @@
 // Project OptM's shared data files in %APPDATA%\ProjectOptM
 // (the same files the 1.x app uses, so everything carries over).
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -59,7 +60,16 @@ struct Session {
     int hotSeconds = 0;                    // seconds the GPU was at 85 C or more
     double heatDrop = 0;                   // % lower FPS while hot and fully loaded (0 = no sign of throttling)
     int otherVideoSeconds = 0;             // seconds a video / stream played on another screen
-    double StuttersPerMin() const { return stutters >= 0 && fpsSeconds >= 30 ? stutters * 60.0 / fpsSeconds : -1; }
+    int loadStutters = 0;                  // of the stutters, the ones while the game was loading (reading lots from disk)
+    int loadSeconds = 0;                   // seconds spent loading
+    // gameplay stutters per minute of gameplay (loading left out - a loading screen hitching isn't a stutter)
+    // (a game "loading" over half the time just streams while you play - then everything counts)
+    bool StreamsConstantly() const { return loadSeconds * 2 > fpsSeconds; }
+    int GameplayStutters() const { return StreamsConstantly() ? stutters : std::max(0, stutters - loadStutters); }
+    double StuttersPerMin() const {
+        double secs = StreamsConstantly() ? fpsSeconds : fpsSeconds - loadSeconds;
+        return stutters >= 0 && secs >= 30 ? GameplayStutters() * 60.0 / secs : -1;
+    }
 };
 
 struct Theme {

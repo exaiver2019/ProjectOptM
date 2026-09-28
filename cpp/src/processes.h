@@ -47,5 +47,6 @@ bool         SetEcoQosOn(DWORD pid, bool on);        // efficiency mode (like Ta
 bool         TrimWorkingSet(DWORD pid);
 bool         EnablePrivilege(const wchar_t* name);
 uint32_t     PurgeStandbyList();                     // NTSTATUS, 0 = success
+uint64_t     ReadBytes(DWORD pid);                   // bytes the process has read so far (query rights only; 0 if unavailable)
 
 }  // namespace proc

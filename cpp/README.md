@@ -242,6 +242,11 @@ optimizing itself works the same for every game. Capturing needs admin rights, w
 - **Session details** (`session-details.json`, keyed `"<date>|<game>"`): 0.1% low, stutters, seconds with FPS,
   how it ended, tweak preset + ids, cores, test variant, GPU temp avg/max, CPU use, ping, stutter cause.
   `history.csv` is unchanged, so 1.x still reads it. Crashed sessions are kept even when under a minute.
+- **Loading vs gameplay stutters**: every 250 ms the game's own read counter (query rights, like Task Manager)
+  is checked; 20 MB/s or more marks it loading, and it stays marked 2 s after. Stutters then count as
+  `LoadStutters`, the seconds as `LoadSeconds`, and those frames are left out of the 1% / 0.1% / 5% lows.
+  Stutters per minute use gameplay only. A game that "loads" over half the session just streams while you
+  play, so then everything counts again.
 - **Compare** (history window tab): two ticked sessions (or the last two) side by side, and which tweaks differed.
 - **Tests** (history window tab): `ccd` (V-Cache vs frequency CCD, 2 sessions each, dual-CCD X3D only, not for
   anti-cheat games) or `ab:<tweak>` (on vs off, 3 each). Stored in settings.json `Experimental.Tests` as

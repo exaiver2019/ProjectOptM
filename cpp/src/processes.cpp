@@ -207,3 +207,14 @@ uint32_t PurgeStandbyList() {
 }
 
 }  // namespace proc
+
+namespace proc {
+uint64_t ReadBytes(DWORD pid) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return 0;
+    IO_COUNTERS io = {};
+    bool ok = GetProcessIoCounters(h, &io) != 0;
+    CloseHandle(h);
+    return ok ? io.ReadTransferCount : 0;
+}
+}  // namespace proc

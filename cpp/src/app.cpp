@@ -494,6 +494,7 @@ void App::Update() {
         return;
     }
     SyntheticFrames();
+    if (opt_.Active() && Ms() - lastReadMs_ >= 250) LoadingTick();   // before the new frames are counted
     frames_.Pump();
     UpdateOverlay();
     uint64_t now = Ms();
@@ -618,6 +619,8 @@ void App::SessionStarted(const GameProfile& p) {
         heat_.clear();
         otherVideoSec_ = otherVideoHz_ = sesHz_ = sampleN_ = 0;
         hotWarned_ = false;
+        lastRead_ = lastReadMs_ = loadUntil_ = 0;
+        loadSeconds_ = 0;
         otherVideoApp_.clear();
     }
     SYSTEM_POWER_STATUS ps;
@@ -644,6 +647,24 @@ void App::SessionStarted(const GameProfile& p) {
     }
 }
 
+// Every 250 ms while a game runs: is it loading? The game reading 20 MB/s or more from disk (a loading
+// screen, or streaming in a new area) - its stutters then count apart, and for 2 s after it stops too
+// (the tail of a load). Only the game's read counter is looked at (query rights, like Task Manager).
+void App::LoadingTick() {
+    const GameProfile* g = opt_.Active();
+    if (!g) return;
+    uint64_t read = 0;
+    for (auto& e : g->exes) for (DWORD pid : procs_.Find(e)) read += proc::ReadBytes(pid);
+    uint64_t now = Ms();
+    if (lastReadMs_ && now > lastReadMs_ && read >= lastRead_) {
+        double mbs = (read - lastRead_) / 1048576.0 / ((now - lastReadMs_) / 1000.0);
+        if (mbs >= 20) loadUntil_ = now + 2000;
+    }
+    lastRead_ = read;
+    lastReadMs_ = now;
+    frames_.SetLoading(now < loadUntil_);
+}
+
 // Once a second while a game runs: temperatures and CPU for the session, and stutters for the cause finder
 void App::SessionSample() {
     sensors_.SetActive(true);
@@ -652,6 +673,7 @@ void App::SessionSample() {
     if (r.cpuPct >= 0) { sesCpuSum_ += r.cpuPct; sesCpuN_++; }
     auto spans = frames_.TakeStutterSpans();
     if (latency_.Running() && !spans.empty()) latency_.AddStutters(spans);
+    if (frames_.Loading() && frames_.Buffer().size() >= 10) loadSeconds_++;
     // heat: temperature, GPU load and FPS together, to tell a hot GPU from one that's slowing down
     const auto& buf = frames_.Buffer();
     double fps = buf.size() >= 10 ? frames::Stats(buf).fps : 0;
@@ -685,7 +707,8 @@ void App::SessionEnded(const GameProfile& p, double minutes, bool gameClosed) {
     std::string extra;
     if (hasFps) extra += ", avg " + std::to_string((int)std::lround(avg)) + " FPS, 1% low " + std::to_string((int)std::lround(low));
     int stutters = hasFps ? frames_.SessionStutters() : -1;
-    if (hasFps) extra += ", " + Plural(stutters, "stutter");
+    int loadSt = hasFps ? frames_.SessionLoadStutters() : 0;
+    if (hasFps) extra += ", " + Plural(std::max(0, stutters - loadSt), "stutter") + (loadSt ? " (+" + std::to_string(loadSt) + " while loading)" : "");
     // what else the session saw
     std::string exitInfo = gameClosed ? exits_.Result(p.exes, (uint64_t)(minutes * 60000)) : "";
     exits_.Clear();
@@ -730,6 +753,8 @@ void App::SessionEnded(const GameProfile& p, double minutes, bool gameClosed) {
             s.avgFps = std::round(avg * 10) / 10; s.low1 = std::round(low * 10) / 10;
             s.low01 = std::round(frames_.SessionLow01() * 10) / 10;
             s.stutters = stutters;
+            s.loadStutters = loadSt;
+            s.loadSeconds = loadSeconds_;
             s.fpsSeconds = std::round(frames_.SessionSeconds());
         }
         s.exit = exitInfo;
@@ -783,7 +808,7 @@ void App::SessionSummary(const Session& s, const std::string& vsLast) {
     if (s.avgFps > 0) {
         snprintf(line, sizeof(line), "avg %.0f FPS  |  1%% low %.0f", s.avgFps, s.low1);
         text = line;
-        if (s.stutters >= 0) text += "  |  " + Plural(s.stutters, "stutter");
+        if (s.stutters >= 0) text += "  |  " + Plural(s.GameplayStutters(), "stutter") + (s.loadStutters && !s.StreamsConstantly() ? " (+" + std::to_string(s.loadStutters) + " loading)" : "");
         if (!vsLast.empty()) text += "\n" + vsLast;
     } else {
         text = "No FPS this time (the graph was off or the game blocks capture).";
@@ -1800,10 +1825,14 @@ void App::PerfCard() {
     if (live && l01 > 0) ImGui::TextColored(kSub, "0.1%% low    %d", (int)std::lround(l01)); else ImGui::TextColored(kSub, "0.1%% low    --");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The slowest 0.1%% of frames this session, as FPS - the big hitches you feel.\nNeeds about 1000 frames first.");
     int stNow = frames::StuttersIn(buf, frames_.Stutters(), 60000);
-    if (live) ImGui::TextColored(stNow ? kAmber : kSub, "Stutters    %d this session, %d last min", frames_.SessionStutters(), stNow);
+    int stLoad = frames_.SessionLoadStutters(), stAll = frames_.SessionStutters();
+    if (live) ImGui::TextColored(stNow ? kAmber : kSub, "Stutters    %d this session%s, %d last min%s", stAll - stLoad,
+                                 stLoad ? (" (+" + std::to_string(stLoad) + " while loading)").c_str() : "", stNow, frames_.Loading() ? "  -  loading" : "");
     else ImGui::TextColored(kSub, "Stutters    --");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("A stutter is a frame that took much longer than the ones around it\n(over 2.5x the usual frametime, and at least 10 ms more). Marked red in the graph.");
+        ImGui::SetTooltip("A stutter is a frame that took much longer than the ones around it\n(over 2.5x the usual frametime, and at least 10 ms more). Marked red in the graph.\n\n"
+                          "While the game is loading - reading 20 MB/s or more from disk, like a loading screen or a new area\n"
+                          "streaming in - its hitches are counted apart and left out of the lows and stutters per minute.");
     ImGui::EndGroup();
     if (ping_.Running() || ping_.PingMs() >= 0) {
         ImGui::SameLine(0, 28 * s_);

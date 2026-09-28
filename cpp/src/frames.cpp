@@ -169,9 +169,10 @@ void FrameCapture::Pump() {
     for (const Frame& f : fresh) {
         double v = f.ms;
         int b = std::min(4000, (int)(v / 0.05));
-        hist_[b]++;
+        allHist_[b]++;
         sessionSum_ += v;
         sessionN_++;
+        if (!loading_) { hist_[b]++; playN_++; }   // the lows come from gameplay frames only
         // stutter: compared with the median of the last 90 frames (needs 30 to judge)
         bool st = false;
         if (recent_.size() >= 30) {
@@ -181,13 +182,14 @@ void FrameCapture::Pump() {
         }
         if (st) {
             stutters_++;
+            if (loading_) loadStutters_++;
             spans_.push_back({ f.ts - (int64_t)(v * qpcFreq_ / 1000.0), f.ts });
             if (spans_.size() > 5000) spans_.erase(spans_.begin());
         }
         recent_.push_back(v);
         if (recent_.size() > 90) recent_.erase(recent_.begin());
         buffer_.push_back(v);
-        flags_.push_back(st ? 1 : 0);
+        flags_.push_back(!st ? 0 : loading_ ? 2 : 1);
     }
     if (buffer_.size() > 20000) {
         buffer_.erase(buffer_.begin(), buffer_.end() - 20000);
@@ -197,9 +199,11 @@ void FrameCapture::Pump() {
 
 void FrameCapture::ResetSession() {
     std::fill(hist_.begin(), hist_.end(), 0);
+    std::fill(allHist_.begin(), allHist_.end(), 0);
     sessionSum_ = 0;
-    sessionN_ = 0;
-    stutters_ = 0;
+    sessionN_ = playN_ = 0;
+    stutters_ = loadStutters_ = 0;
+    loading_ = false;
     buffer_.clear();
     flags_.clear();
     recent_.clear();
@@ -220,35 +224,31 @@ void FrameCapture::InjectForTest(double ms) {
     pending_.push_back({ ms, testTs_ });
 }
 
-double FrameCapture::SessionLowPct(double frac) const {
-    if (sessionN_ < 100) return 0;
-    uint64_t need = (uint64_t)std::ceil(sessionN_ * frac), acc = 0;
+// FPS the slowest `frac` of frames fall under - from gameplay frames when there are enough of them
+// (a session that was mostly loading falls back to every frame)
+double FrameCapture::LowFrom(double frac, uint64_t minFrames) const {
+    // a game that "loads" most of the time just streams from disk while you play: then every frame counts
+    bool play = playN_ >= minFrames && playN_ * 2 >= sessionN_;
+    const std::vector<uint32_t>& h = play ? hist_ : allHist_;
+    uint64_t n = play ? playN_ : sessionN_;
+    if (n < minFrames) return 0;
+    uint64_t need = (uint64_t)std::ceil(n * frac), acc = 0;
     for (int b = 4000; b >= 0; b--) {
-        acc += hist_[b];
+        acc += h[b];
         if (acc >= need) return 1000.0 / ((b + 0.5) * 0.05);
     }
     return 0;
 }
 
-double FrameCapture::SessionLow01() const {
-    if (sessionN_ < 1000) return 0;   // under 1000 frames the 0.1% is a single frame - too noisy
-    uint64_t need = (uint64_t)std::ceil(sessionN_ * 0.001), acc = 0;
-    for (int b = 4000; b >= 0; b--) {
-        acc += hist_[b];
-        if (acc >= need) return 1000.0 / ((b + 0.5) * 0.05);
-    }
-    return 0;
-}
+double FrameCapture::SessionLowPct(double frac) const { return LowFrom(frac, 100); }
+
+double FrameCapture::SessionLow01() const { return LowFrom(0.001, 1000); }   // under 1000 frames the 0.1% is one frame - too noisy
 
 bool FrameCapture::SessionStats(double& avgFps, double& low1) const {
     avgFps = low1 = 0;
     if (sessionN_ < 100 || sessionSum_ <= 0) return false;
     avgFps = sessionN_ * 1000.0 / sessionSum_;
-    uint64_t need = (uint64_t)std::ceil(sessionN_ * 0.01), acc = 0;
-    for (int b = 4000; b >= 0; b--) {
-        acc += hist_[b];
-        if (acc >= need) { low1 = 1000.0 / ((b + 0.5) * 0.05); break; }
-    }
+    low1 = LowFrom(0.01, 100);
     return true;
 }
 
@@ -291,7 +291,7 @@ std::vector<uint8_t> StutterColumns(const std::vector<double>& ft, const std::ve
     for (int i = (int)ft.size() - 1; i >= 0; i--) {
         t += ft[i];
         if (t > windowMs) break;
-        if (flags[i]) c[std::max(0, cols - 1 - (int)(t / windowMs * cols))] = 1;
+        if (flags[i] == 1) c[std::max(0, cols - 1 - (int)(t / windowMs * cols))] = 1;   // gameplay stutters (2 = while loading)
     }
     return c;
 }
@@ -300,7 +300,7 @@ int StuttersIn(const std::vector<double>& ft, const std::vector<uint8_t>& flags,
     if (flags.size() != ft.size()) return 0;
     double t = 0;
     int n = 0;
-    for (int i = (int)ft.size() - 1; i >= 0 && t < windowMs; i--) { t += ft[i]; n += flags[i]; }
+    for (int i = (int)ft.size() - 1; i >= 0 && t < windowMs; i--) { t += ft[i]; n += flags[i] == 1; }
     return n;
 }
 

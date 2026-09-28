@@ -30,7 +30,12 @@ public:
     bool SessionStats(double& avgFps, double& low1) const;          // whole session; false if too short
     double SessionLow01() const;                                    // 0.1% low FPS (0 if too few frames)
     double SessionLowPct(double frac) const;                        // FPS the slowest frac of frames fall under (0.05 = 5% low)
-    int SessionStutters() const { return stutters_; }
+    int SessionStutters() const { return stutters_; }              // all of them, loading included
+    int SessionLoadStutters() const { return loadStutters_; }      // the ones while the game was loading
+    // While the game is loading (reading lots from disk), its stutters are counted apart and its frames are
+    // left out of the lows - a loading screen hitching isn't the game stuttering. Set once a second.
+    void SetLoading(bool on) { loading_ = on; }
+    bool Loading() const { return loading_; }
     double SessionSeconds() const { return sessionSum_ / 1000.0; }  // time covered by captured frames
     // stutters as QPC timestamps (start of the slow frame, end) - the stutter-cause finder looks inside them
     std::vector<std::pair<int64_t, int64_t>> TakeStutterSpans();
@@ -61,13 +66,16 @@ private:
     std::string error_;
 
     std::vector<double> buffer_;
-    std::vector<uint8_t> flags_;                                  // stutter marks, same length as buffer_
+    std::vector<uint8_t> flags_;                                  // same length as buffer_: 1 = stutter, 2 = stutter while loading
     std::vector<double> recent_;                                  // last frames, for the stutter median
     std::vector<std::pair<int64_t, int64_t>> spans_;              // stutters not yet taken
-    std::vector<uint32_t> hist_ = std::vector<uint32_t>(4001);   // 0.05 ms buckets
+    std::vector<uint32_t> hist_ = std::vector<uint32_t>(4001);    // 0.05 ms buckets - gameplay frames
+    std::vector<uint32_t> allHist_ = std::vector<uint32_t>(4001); // every frame
+    double LowFrom(double frac, uint64_t minFrames) const;
     double sessionSum_ = 0;
-    uint64_t sessionN_ = 0;
-    int stutters_ = 0;
+    uint64_t sessionN_ = 0, playN_ = 0;
+    int stutters_ = 0, loadStutters_ = 0;
+    bool loading_ = false;
     int64_t testTs_ = 0;
 };
 

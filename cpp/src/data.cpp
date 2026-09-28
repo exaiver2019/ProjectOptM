@@ -542,6 +542,8 @@ Json DetailsOf(const Session& s) {
     if (s.hotSeconds > 0) d.obj["HotSeconds"] = Json::Num(s.hotSeconds);
     num("HeatDrop", s.heatDrop > 0 ? s.heatDrop : -1);
     if (s.otherVideoSeconds > 0) d.obj["OtherVideoSeconds"] = Json::Num(s.otherVideoSeconds);
+    if (s.loadStutters > 0) d.obj["LoadStutters"] = Json::Num(s.loadStutters);
+    if (s.loadSeconds > 0) d.obj["LoadSeconds"] = Json::Num(s.loadSeconds);
     return d;
 }
 void ApplyDetails(Session& s, const Json& d) {
@@ -558,6 +560,8 @@ void ApplyDetails(Session& s, const Json& d) {
     s.hotSeconds = (int)num("HotSeconds", 0);
     s.heatDrop = num("HeatDrop", 0);
     s.otherVideoSeconds = (int)num("OtherVideoSeconds", 0);
+    s.loadStutters = (int)num("LoadStutters", 0);
+    s.loadSeconds = (int)num("LoadSeconds", 0);
 }
 }  // namespace
 

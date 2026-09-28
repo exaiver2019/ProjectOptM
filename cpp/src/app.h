@@ -126,6 +126,7 @@ private:
     // 2.1.1 experimental
     void PrepareSession(GameProfile& g);           // a running test picks this session's setup
     void SessionSample();                          // once a second while playing: temps, CPU, stutter causes
+    void LoadingTick();                            // every 250 ms: is the game loading (lots of disk reads)?
     void GamePromptTick();                         // "Is this a game?" - a full-screen app without a profile
     void GamePromptCard();
     void AnswerGamePrompt(int answer);             // 1 = yes, 0 = never, -1 = not now
@@ -220,6 +221,8 @@ private:
     std::vector<insights::HeatSample> heat_;   // one a second: GPU temp, GPU use, FPS
     int otherVideoSec_ = 0, otherVideoHz_ = 0, sesHz_ = 0, sampleN_ = 0;
     bool hotWarned_ = false;
+    uint64_t lastRead_ = 0, lastReadMs_ = 0, loadUntil_ = 0;   // loading detection: the game's disk reads
+    int loadSeconds_ = 0;
     std::string otherVideoApp_;
     std::string balloonGame_;      // the summary notification on screen is about this game (a click opens its history)
     std::vector<LatencyTrace::Driver> causes_;
